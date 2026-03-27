@@ -1,0 +1,141 @@
+# -------------------------------
+# # Column renames for Bronze ingestion
+# # -------------------------------
+column_rename_map:
+  "Row ID": "row_id"
+  "Customer Name": "customer_name"
+  "Segment": "segment"
+  "Country": "country"
+  "City": "city"
+  "State": "state"
+  "Postal Code": "postal_code"
+  "Region": "region"
+  "Product ID": "product_id"
+  "Category": "category"
+  "Sub-Category": "sub_category"
+  "Product Name": "product_name"
+  "Customer ID": "customer_id"
+  "Order ID": "order_id"
+  "Order Date": "order_date"
+  "Ship Date": "ship_date"
+  "Ship Mode": "ship_mode"
+  "Sales": "sales"
+  "Quantity": "quantity"
+  "Discount": "discount"
+  "Profit": "profit"
+
+# -------------------------------
+# Bronze main table configuration
+# -------------------------------
+bronze_main:
+  table_name: "superstore_raw"  # just entity/table name, no catalog/schema
+  metrics_table: "bronze_layer_main_ingestion_metrics"
+  layer_name: "Bronze"
+  metadata_columns:
+    - ingestion_ts
+    - ingestion_date
+    - source_file_path
+    - source_file_name
+    - source_file_size_bytes
+    - source_file_modification_time
+    - raw_table_name
+
+# -------------------------------
+# Bronze entities
+# -------------------------------
+bronze_entities:
+  customers:
+    table_name: "customers"
+    metrics_table: "bronze_layer_entity_metrics"
+    source_table: "superstore_raw"
+    checkpointLocation: "/Volumes/workspace/default/my_filestore/superstore_metadata/superstore_bronze_metadata/entity_checkpoint/customers/"
+    layer_name: "Bronze"
+    columns: ["customer_id", "customer_name", "segment", "country", "state", "city", "postal_code", "region"]
+    business_key: "customer_id"
+    partition_col: "ingestion_date"
+    z_order_columns: ["customer_id"]
+    metadata_columns:
+      - ingestion_ts
+      - ingestion_date
+      - source_file_path
+      - source_file_name
+      - source_file_size_bytes
+      - source_file_modification_time
+      - raw_table_name
+
+  products:
+    table_name: "products"
+    metrics_table: "bronze_layer_entity_metrics"
+    source_table: "superstore_raw"
+    checkpointLocation: "/Volumes/workspace/default/my_filestore/superstore_metadata/superstore_bronze_metadata/entity_checkpoint/products/"
+    layer_name: "Bronze"
+    columns: ["product_id", "product_name", "category", "sub_category"]
+    business_key: "product_id"
+    partition_col: "ingestion_date"
+    z_order_columns: ["product_id"]
+    metadata_columns:
+      - ingestion_ts
+      - ingestion_date
+      - source_file_path
+      - source_file_name
+      - source_file_size_bytes
+      - source_file_modification_time
+      - raw_table_name
+
+  orders:
+    table_name: "orders"
+    metrics_table: "bronze_layer_entity_metrics"
+    source_table: "superstore_raw"
+    checkpointLocation: "/Volumes/workspace/default/my_filestore/superstore_metadata/superstore_bronze_metadata/entity_checkpoint/orders/"
+    layer_name: "Bronze"
+    columns: ["order_id", "customer_id", "order_date", "ship_date", "ship_mode"]
+    business_key: "order_id"
+    partition_col: "ingestion_date"
+    z_order_columns: ["order_id", "customer_id"]
+    metadata_columns:
+      - ingestion_ts
+      - ingestion_date
+      - source_file_path
+      - source_file_name
+      - source_file_size_bytes
+      - source_file_modification_time
+      - raw_table_name
+
+  sales:
+    table_name: "sales"
+    metrics_table: "bronze_layer_entity_metrics"
+    source_table: "superstore_raw"
+    checkpointLocation: "/Volumes/workspace/default/my_filestore/superstore_metadata/superstore_bronze_metadata/entity_checkpoint/sales/"
+    layer_name: "Bronze"
+    columns: ["order_id", "customer_id", "product_id", "sales", "quantity", "discount", "profit"]
+    business_key: ["order_id", "customer_id"]
+    partition_col: "ingestion_date"
+    z_order_columns: ["order_id", "customer_id"]
+    metadata_columns:
+      - ingestion_ts
+      - ingestion_date
+      - source_file_path
+      - source_file_name
+      - source_file_size_bytes
+      - source_file_modification_time
+      - raw_table_name
+
+# -----------------------------
+# File Paths & Table Names (Configuration per Environment)
+# -----------------------------
+env_paths:
+  dev:
+    raw_source_file_path: "/Volumes/workspace/default/my_filestore_dev/raw/"
+    schema_location: "/Volumes/workspace/default/my_filestore_dev/superstore_metadata/superstore_bronze_metadata/schema/"
+    checkpoint_location: "/Volumes/workspace/default/my_filestore_dev/superstore_metadata/superstore_bronze_metadata/checkpoint/"
+
+  qa:
+    raw_source_file_path: "/Volumes/workspace/default/my_filestore_qa/raw/"
+    schema_location: "/Volumes/workspace/default/my_filestore_qa/superstore_metadata/superstore_bronze_metadata/schema/"
+    checkpoint_location: "/Volumes/workspace/default/my_filestore_qa/superstore_metadata/superstore_bronze_metadata/checkpoint/"
+
+  prod:
+    raw_source_file_path: "/Volumes/workspace/default/my_filestore_prod/raw/"
+    schema_location: "/Volumes/workspace/default/my_filestore_prod/superstore_metadata/superstore_bronze_metadata/schema/"
+    checkpoint_location: "/Volumes/workspace/default/my_filestore_prod/superstore_metadata/superstore_bronze_metadata/checkpoint/"
+

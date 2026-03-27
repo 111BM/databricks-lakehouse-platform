@@ -1,0 +1,77 @@
+# This is a Databricks asset bundle definition for superstore_medallionarchitecture_dab.
+# See https://docs.databricks.com/dev-tools/bundles/index.html for documentation.
+bundle:
+  name: superstore_medallionarchitecture_dab
+  # name:superstore_data_platform
+  uuid: 1e5129cf-522e-4d2a-a430-8c5928f2dbbe
+
+include:
+  - resources/supertsore_lakehouse_job.job.yml
+
+# Variable declarations. These variables are assigned in the dev/prod targets below.
+variables:
+  catalog:
+    description: The catalog to use
+  schema:
+    description: The schema to use
+  SUPERSTORE_ENV:
+    description: Environment of the pipeline (dev/qa/prod)
+  SUPERSTORE_PIPELINE_NAME:
+    description: Name of the pipeline
+  SUPERSTORE_PIPELINE_VERSION:
+    description: Version of the Superstore pipeline
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      # host: http://127.0.0.1:7073
+      host: https://dbc-081a6a55-88cd.cloud.databricks.com
+      # root_path: /Workspace/Users/bireshmoktan@gmail.com/.bundle/${bundle.name}/${bundle.target}
+      # root_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_dev_environment/.bundle/${bundle.name}/${bundle.target}
+      # root_path: ~/superstore_dev_environment/.bundle/${bundle.name}/${bundle.target}
+      root_path: ~/Workspace/Repos/superstore_dev_environment/.bundle/${bundle.name}/${bundle.target}
+      
+    presets:
+      source_linked_deployment: false   
+    variables:
+      catalog: superstore_catalog
+      schema: dev
+      SUPERSTORE_ENV: dev
+      SUPERSTORE_PIPELINE_NAME: superstore_etl_pipeline_dev
+      SUPERSTORE_PIPELINE_VERSION: "1.0"
+
+  qa:
+    mode: development
+    workspace:
+      host: https://dbc-081a6a55-88cd.cloud.databricks.com
+      # root_path: /Workspace/superstore_qa_environment/.bundle/${bundle.name}/${bundle.target}
+      root_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_qa_environment/.bundle/${bundle.name}/${bundle.target}
+      # root_path: ~/.bundle/${bundle.name}/${bundle.target}
+    presets:
+      source_linked_deployment: false   
+    variables:
+      catalog: superstore_catalog
+      schema: qa
+      SUPERSTORE_ENV: qa
+      SUPERSTORE_PIPELINE_NAME: superstore_etl_pipeline_qa
+      SUPERSTORE_PIPELINE_VERSION: "1.0"
+
+  prod:
+    mode: production
+    workspace:
+      # host: http://127.0.0.1:7073
+      host: https://dbc-081a6a55-88cd.cloud.databricks.com
+      # We explicitly deploy to /Workspace/Users/bireshmoktan@gmail.com to make sure we only have a single copy.
+      root_path: /Workspace/superstore_prod_environment/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      catalog: superstore_catalog
+      schema: prod
+      SUPERSTORE_ENV: prod
+      SUPERSTORE_PIPELINE_NAME: superstore_etl_pipeline_prod
+      SUPERSTORE_PIPELINE_VERSION: "1.0"
+    permissions:
+      - user_name: bireshmoktan@gmail.com
+        level: CAN_MANAGE
+

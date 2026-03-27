@@ -1,0 +1,189 @@
+silver_table_configs:
+
+  # -------------------------------
+  # Customers table
+  # -------------------------------
+  - bronze_table: customers
+    quarantine_table: customers_dirty
+    silver_table: customers
+    audit_table: customers_duplicates
+    read_from_table: customers
+    business_keys:
+      - customer_id
+    numeric_cast_cols: {}
+    regex_cols: {}
+    categorical_allowed_vals:
+      region:
+        - East
+        - West
+        - Central
+        - South
+    metrics_table: silver_layer_metrics
+    layer_name: silver
+
+  # -------------------------------
+  # Products table
+  # -------------------------------
+  - bronze_table: products
+    quarantine_table: products_dirty
+    silver_table: products
+    audit_table: products_duplicates
+    read_from_table: products
+    business_keys:
+      - product_id
+    numeric_cast_cols: {}
+    regex_cols: {}
+    categorical_allowed_vals:
+      category:
+        - Furniture
+        - Office Supplies
+        - Technology
+    metrics_table: silver_layer_metrics
+    layer_name: silver
+
+  # -------------------------------
+  # Orders table
+  # -------------------------------
+  - bronze_table: orders
+    quarantine_table: orders_dirty
+    silver_table: orders
+    audit_table: orders_duplicates
+    read_from_table: orders
+    business_keys:
+      - order_id
+    numeric_cast_cols: {}
+    date_cast_cols:
+      - order_date
+      - ship_date
+    regex_cols:
+      order_date: |
+        (?ix)^(
+          (0[1-9]|[12][0-9]|3[01])-(0[1-9]|1[0-2])-\d{4} |
+          \d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01]) |
+          (0[1-9]|[12][0-9]|3[01])/(0[1-9]|1[0-2])/\d{4} |
+          \d{1,2}\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s\d{4} |
+          \d{1,2}\s(?:January|February|March|April|May|June|July|August|September|October|November|December)\s\d{4}
+        )$
+    categorical_allowed_vals: {}
+    metrics_table: silver_layer_metrics
+    layer_name: silver
+
+  # -------------------------------
+  # Sales table
+  # -------------------------------
+  - bronze_table: sales
+    quarantine_table: sales_dirty
+    silver_table: sales
+    audit_table: sales_duplicates
+    read_from_table: sales
+    business_keys:
+      - order_id
+      - product_id
+    numeric_cast_cols:
+      sales: decimal(10,2)
+      profit: decimal(10,2)
+      discount: decimal(10,2)
+      quantity: int
+    regex_cols:
+      sales: '^\d+(\.\d+)?$'
+      profit: '^-?\d+(\.\d+)?$'
+      discount: '^\d+(\.\d+)?$'
+      quantity: '^\d+$'
+    categorical_allowed_vals: {}
+    metrics_table: silver_layer_metrics
+    layer_name: silver
+
+# silver_table_configs:
+
+#   # -------------------------------
+#   # Customers table
+#   # -------------------------------
+#   - bronze_table: superstore_catalog.superstore_bronze.customers
+#     quarantine_table: superstore_catalog.superstore_quarantine.customers_dirty
+#     silver_table: superstore_catalog.superstore_silver.customers
+#     audit_table: superstore_catalog.superstore_audit.customers_duplicates
+#     read_from_table: superstore_catalog.superstore_bronze.customers
+#     business_keys:
+#       - customer_id
+#     numeric_cast_cols: {}
+#     regex_cols: {}
+#     categorical_allowed_vals:
+#       region:
+#         - East
+#         - West
+#         - Central
+#         - South
+#     metrics_table: superstore_catalog.superstore_metrics.silver_layer_metrics
+#     layer_name: silver
+
+#   # -------------------------------
+#   # Products table
+#   # -------------------------------
+#   - bronze_table: superstore_catalog.superstore_bronze.products
+#     quarantine_table: superstore_catalog.superstore_quarantine.products_dirty
+#     silver_table: superstore_catalog.superstore_silver.products
+#     audit_table: superstore_catalog.superstore_audit.products_duplicates
+#     read_from_table: superstore_catalog.superstore_bronze.products
+#     business_keys:
+#       - product_id
+#     numeric_cast_cols: {}
+#     regex_cols: {}
+#     categorical_allowed_vals:
+#       category:
+#         - Furniture
+#         - Office Supplies
+#         - Technology
+#     metrics_table: superstore_catalog.superstore_metrics.silver_layer_metrics
+#     layer_name: silver
+
+#   # -------------------------------
+#   # Orders table
+#   # -------------------------------
+#   - bronze_table: superstore_catalog.superstore_bronze.orders
+#     quarantine_table: superstore_catalog.superstore_quarantine.orders_dirty
+#     silver_table: superstore_catalog.superstore_silver.orders
+#     audit_table: superstore_catalog.superstore_audit.orders_duplicates
+#     read_from_table: superstore_catalog.superstore_bronze.orders
+#     business_keys:
+#       - order_id
+#     numeric_cast_cols: {}
+#     date_cast_cols:
+#       - order_date
+#       - ship_date
+#     regex_cols:
+#       order_date: |
+#         (?ix)^(
+#           (0[1-9]|[12][0-9]|3[01])-(0[1-9]|1[0-2])-\d{4} |
+#           \d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01]) |
+#           (0[1-9]|[12][0-9]|3[01])/(0[1-9]|1[0-2])/\d{4} |
+#           \d{1,2}\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s\d{4} |
+#           \d{1,2}\s(?:January|February|March|April|May|June|July|August|September|October|November|December)\s\d{4}
+#         )$
+#     categorical_allowed_vals: {}
+#     metrics_table: superstore_catalog.superstore_metrics.silver_layer_metrics
+#     layer_name: silver
+
+#   # -------------------------------
+#   # Sales table
+#   # -------------------------------
+#   - bronze_table: superstore_catalog.superstore_bronze.sales
+#     quarantine_table: superstore_catalog.superstore_quarantine.sales_dirty
+#     silver_table: superstore_catalog.superstore_silver.sales
+#     audit_table: superstore_catalog.superstore_audit.sales_duplicates
+#     read_from_table: superstore_catalog.superstore_bronze.sales
+#     business_keys:
+#       - order_id
+#       - product_id
+#     numeric_cast_cols:
+#       sales: decimal(10,2)
+#       profit: decimal(10,2)
+#       discount: decimal(10,2)
+#       quantity: int
+#     regex_cols:
+#       sales: '^\d+(\.\d+)?$'
+#       profit: '^-?\d+(\.\d+)?$'
+#       discount: '^\d+(\.\d+)?$'
+#       quantity: '^\d+$'
+#     categorical_allowed_vals: {}
+#     metrics_table: superstore_catalog.superstore_metrics.silver_layer_metrics
+#     layer_name: silver
