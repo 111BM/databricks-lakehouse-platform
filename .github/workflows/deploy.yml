@@ -35,17 +35,14 @@ jobs:
           python-version: '3.10'
 
        # 3.Install Databricks CLI v0.295.0 and DAB
-      - name: Install Databricks CLI & DAB
+      - name: Install Databricks CLI
         run: |
-          # Install CLI using official Databricks installer
+          # Install CLI
           curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/v0.295.0/install.sh | sudo sh
+          
+          # Verify CLI
           databricks --version
           
-          # Install Databricks Asset Bundles (DAB)
-          pip install --upgrade pip
-          pip install git+https://github.com/databricks/databricks-bundle.git
-          dab --version
-
       # 4.Configure Databricks authentication from secrets
       - name: Configure Databricks CLI
         env:
