@@ -9,7 +9,7 @@
 # - No manual deployment commands needed
 # - Ensures environment isolation, consistent deployments, and reproducibility
 
-name: Databricks CI/CD Pipeline
+name: Superstore Data Platform CI/CD
 
 # Trigger workflow on push to any of the main branches
 on:
