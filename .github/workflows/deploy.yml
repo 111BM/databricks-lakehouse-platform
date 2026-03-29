@@ -1,0 +1,75 @@
+# ==========================================================
+# GitHub Actions CI/CD Workflow for Databricks DAB Project
+# ==========================================================
+# Purpose:
+# - Automate deployment of Databricks project when merging code
+#   - Merge to dev → auto deploy to Dev environment
+#   - Merge to qa → auto deploy to QA environment
+#   - Merge to main → auto deploy to Prod environment
+# - No manual deployment commands needed
+# - Ensures environment isolation, consistent deployments, and reproducibility
+
+name: Databricks CI/CD Pipeline
+
+# Trigger workflow on push to any of the main branches
+on:
+  push:
+    branches:
+      - dev
+      - qa
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest  # Use latest Ubuntu runner
+
+    steps:
+      # 1.Checkout code from repository
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 2.Set up Python environment (DAB requires Python)
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+       # 3.Install Databricks CLI v0.295.0 and DAB
+      - name: Install Databricks CLI
+        run: |
+          # Install CLI
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/v0.295.0/install.sh | sudo sh
+          
+          # Verify CLI
+          databricks --version
+          
+      # 4.Configure Databricks authentication from secrets
+      - name: Configure Databricks CLI
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: |
+          databricks configure --token <<EOF
+          $DATABRICKS_HOST
+          $DATABRICKS_TOKEN
+          EOF
+
+      # 5.Deploy using DAB based on branch
+      - name: Deploy using DAB
+        run: |
+          BRANCH_NAME="${GITHUB_REF##*/}"  # Extract branch name
+          echo "Current branch: $BRANCH_NAME"
+
+          if [ "$BRANCH_NAME" == "dev" ]; then
+            echo "Deploying to Dev environment"
+            databricks bundle deploy  --target dev
+          elif [ "$BRANCH_NAME" == "qa" ]; then
+            echo "Deploying to QA environment"
+            databricks bundle deploy  --target qa
+          elif [ "$BRANCH_NAME" == "main" ]; then
+            echo "Deploying to Production environment"
+            databricks bundle deploy  --target prod
+          else
+            echo "Branch $BRANCH_NAME not configured for deployment"
+            exit 1
+          fi
