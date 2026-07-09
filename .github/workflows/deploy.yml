@@ -1,75 +1,166 @@
-# ==========================================================
-# GitHub Actions CI/CD Workflow for Databricks DAB Project
-# ==========================================================
-# Purpose:
-# - Automate deployment of Databricks project when merging code
-#   - Merge to dev → auto deploy to Dev environment
-#   - Merge to qa → auto deploy to QA environment
-#   - Merge to main → auto deploy to Prod environment
-# - No manual deployment commands needed
-# - Ensures environment isolation, consistent deployments, and reproducibility
+# ==============================================================================
+# Superstore Data Platform CI/CD Pipeline
+# ==============================================================================
+# Deploy on merge with comprehensive safety gates:
+#   - Unit tests (gate: blocks deploy if tests fail)
+#   - Bundle validation (gate: catches config errors early)
+#   - Manual approval for prod (gate: human review required)
+#   - Code coverage tracking (portfolio value: quality metrics)
+#
+# Branch → Target:  dev → dev, qa → qa, main → prod
+# ==============================================================================
 
 name: Superstore Data Platform CI/CD
 
-# Trigger workflow on push to any of the main branches
 on:
   push:
-    branches:
-      - dev
-      - qa
-      - main
+    branches: [dev, qa, main]
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest  # Use latest Ubuntu runner
-
+  # --------------------------------------------------------------------------
+  # Job 1: Unit Tests + Coverage (Gate)
+  # Blocks all deploys if tests fail. Coverage shows code quality trends.
+  # --------------------------------------------------------------------------
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10  # Prevent hung tests from blocking deploys
+    
     steps:
-      # 1.Checkout code from repository
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      # 2.Set up Python environment (DAB requires Python)
-      - name: Setup Python
-        uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.12"
+      
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      
+      # Cache pip for faster runs
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('tests/unit/requirements-unit.txt') }}
+      
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tests/unit/requirements-unit.txt
+      
+      # Run tests with coverage (portfolio value: track code quality)
+      - name: Run unit tests with coverage
+        run: |
+          pytest tests/unit/ -v \
+            --junitxml=test-results.xml \
+            --cov=src \
+            --cov-report=xml \
+            --cov-report=term-missing
+      
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results.xml
+          retention-days: 30
+      
+      # Upload coverage (shows team which code is tested)
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 90
+      
+      # Optional: Push to Codecov for visualization
+      # - uses: codecov/codecov-action@v3
+      #   with:
+      #     file: ./coverage.xml
 
-       # 3.Install Databricks CLI v0.295.0 and DAB
+  # --------------------------------------------------------------------------
+  # Job 2: Deploy to Dev/QA (Auto)
+  # --------------------------------------------------------------------------
+  deploy-non-prod:
+    needs: unit-tests
+    if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/qa'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
       - name: Install Databricks CLI
+        uses: databricks/setup-cli@main
+      
+      - name: Set target from branch
+        id: target
         run: |
-          # Install CLI
-          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/v0.295.0/install.sh | sudo sh
-          
-          # Verify CLI
-          databricks --version
-          
-      # 4.Configure Databricks authentication from secrets
-      - name: Configure Databricks CLI
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-        run: |
-          databricks configure --token <<EOF
-          $DATABRICKS_HOST
-          $DATABRICKS_TOKEN
-          EOF
+          BRANCH="${GITHUB_REF##*/}"
+          case "$BRANCH" in
+            dev) TARGET=dev ;;
+            qa)  TARGET=qa ;;
+            *) echo "Unexpected branch: $BRANCH"; exit 1 ;;
+          esac
+          echo "target=$TARGET" >> $GITHUB_OUTPUT
+          echo "Deploying to: $TARGET"
+      
+      # CRITICAL: Validate before deploy (catches YAML errors, missing vars)
+      - name: Validate bundle
+        run: databricks bundle validate --target ${{ steps.target.outputs.target }}
+      
+      - name: Deploy to ${{ steps.target.outputs.target }}
+        run: databricks bundle deploy --target ${{ steps.target.outputs.target }}
 
-      # 5.Deploy using DAB based on branch
-      - name: Deploy using DAB
+  # --------------------------------------------------------------------------
+  # Job 3: Deploy to Production (Manual Approval Required)
+  # --------------------------------------------------------------------------
+  deploy-prod:
+    needs: unit-tests
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    # CRITICAL: Manual approval gate for prod
+    # Setup: GitHub Settings → Environments → Create "production" → Add reviewers
+    environment:
+      name: production
+      url: https://your-workspace.cloud.databricks.com
+    
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@main
+      
+      - name: Validate bundle (prod)
+        run: databricks bundle validate --target prod
+      
+      - name: Deploy to production
+        run: databricks bundle deploy --target prod
+      
+      # Audit trail for compliance
+      - name: Record production deploy
+        if: always()
         run: |
-          BRANCH_NAME="${GITHUB_REF##*/}"  # Extract branch name
-          echo "Current branch: $BRANCH_NAME"
-
-          if [ "$BRANCH_NAME" == "dev" ]; then
-            echo "Deploying to Dev environment"
-            databricks bundle deploy  --target dev
-          elif [ "$BRANCH_NAME" == "qa" ]; then
-            echo "Deploying to QA environment"
-            databricks bundle deploy  --target qa
-          elif [ "$BRANCH_NAME" == "main" ]; then
-            echo "Deploying to Production environment"
-            databricks bundle deploy  --target prod
-          else
-            echo "Branch $BRANCH_NAME not configured for deployment"
-            exit 1
-          fi
+          echo "=== PRODUCTION DEPLOY ===" > prod-deploy-record.txt
+          echo "Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> prod-deploy-record.txt
+          echo "Commit: ${{ github.sha }}" >> prod-deploy-record.txt
+          echo "Actor: ${{ github.actor }}" >> prod-deploy-record.txt
+          echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> prod-deploy-record.txt
+      
+      - name: Upload deploy record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-deploy-record
+          path: prod-deploy-record.txt
+          retention-days: 365

@@ -3,140 +3,64 @@
 # =====================================================
 dim_config:
   customers:
-    layer_name: "Gold"
-    table_type: "dimension"
-    silver_tbl: "customers"             # Logical Silver table name
-    gold_tbl: "dim_customers"           # Logical Gold table name
-    metrics_table: "gold_layer_metrics" # Logical metrics table
+    layer_name: Gold
+    table_type: dimension
+    dim_type: customers
+    silver_tbl: customers             # Logical Silver table name
+    silver_orders_tbl: orders         #silver orders tbl to grab effecitve date from order_date for customer         
+    gold_tbl: dim_customers           # Logical Gold table name
+    metrics_table: gold_layer_metrics # Logical metrics table
     required_columns:
-      - "customer_id"
-      - "customer_name"
-      - "segment"
-      - "country"
-      - "state"
-      - "city"
-      - "postal_code"
-      - "region"
-      - "ingestion_ts"
-      - "source_file_path"
-      - "source_file_name"
+      - customer_id
+      - customer_name
+      - segment
+      - country
+      - state
+      - city
+      - postal_code
+      - region
+      # - silver_customers_hash_id
     natural_keys:
-      - "customer_id"
+      - customer_id
     column_mapping:
-      customer_name: "customer_name"
-      segment: "segment"
-      country: "country"
-      state: "state"
-      city: "city"
-      postal_code: "postal_code"
-      region: "region"
-      ingestion_ts: "ingestion_ts"
-      source_file_path: "source_file_path"
-      source_file_name: "source_file_name"
-    hash_column: "dim_customer_hash_id"
-    silver_hash_column: "silver_customers_hash_id"
+      customer_name: customer_name
+      segment: segment
+      country: country
+      state: state
+      city: city
+      postal_code: postal_code
+      region: region
+    hash_column: gold_customers_hash_id
+    # silver_hash_column: silver_customers_hash_id
     z_order_cols:
-      - "region"
-      - "state"
+      - region
+      - state
     max_rows_per_bucket: 1000000
 
   products:
-    layer_name: "Gold"
-    table_type: "dimension"
-    silver_tbl: "products"
-    gold_tbl: "dim_products"
-    metrics_table: "gold_layer_metrics"
+    layer_name: Gold
+    table_type: dimension
+    dim_type: products
+    silver_tbl: products
+    gold_tbl: dim_products
+    metrics_table: gold_layer_metrics
     required_columns:
-      - "product_id"
-      - "product_name"
-      - "category"
-      - "sub_category"
-      - "ingestion_ts"
-      - "source_file_path"
-      - "source_file_name"
+      - product_id
+      - product_name
+      - category
+      - sub_category
+      # - silver_products_hash_id
     natural_keys:
-      - "product_id"
+      - product_id
     column_mapping:
-      product_id: "product_id"
-      product_name: "product_name"
-      category: "category"
-      sub_category: "sub_category"
-      ingestion_ts: "ingestion_ts"
-      source_file_path: "source_file_path"
-      source_file_name: "source_file_name"
-    hash_column: "dim_product_hash_id"
-    silver_hash_column: "silver_products_hash_id"
+      product_id: product_id
+      product_name: product_name
+      category: category
+      sub_category: sub_category
+    hash_column: gold_products_hash_id
+    # silver_hash_column: silver_products_hash_id
     z_order_cols:
-      - "category"
-      - "sub_category"
+      - category
+      - sub_category
     max_rows_per_bucket: 1000000
 
-# dim_config:
-#   customers:
-#     layer_name: "Gold"
-#     table_type: "dimension"
-#     silver_tbl: "superstore_catalog.superstore_silver.customers"
-#     gold_tbl: "superstore_catalog.superstore_gold.dim_customers"
-#     metrics_table: "superstore_catalog.superstore_metrics.gold_layer_metrics"
-#     required_columns:
-#       - "customer_id"
-#       - "customer_name"
-#       - "segment"
-#       - "country"
-#       - "state"
-#       - "city"
-#       - "postal_code"
-#       - "region"
-#       - "ingestion_ts"
-#       - "source_file_path"
-#       - "source_file_name"
-#     natural_keys:
-#       - "customer_id"
-#     column_mapping:
-#       customer_name: "customer_name"
-#       segment: "segment"
-#       country: "country"
-#       state: "state"
-#       city: "city"
-#       postal_code: "postal_code"
-#       region: "region"
-#       ingestion_ts: "ingestion_ts"
-#       source_file_path: "source_file_path"
-#       source_file_name: "source_file_name"
-#     hash_column: "dim_customer_hash_id"
-#     silver_hash_column: "silver_customers_hash_id"
-#     z_order_cols:
-#       - "region"
-#       - "state"
-#     max_rows_per_bucket: 1000000
-
-#   products:
-#     layer_name: "Gold"
-#     table_type: "dimension"
-#     silver_tbl: "superstore_catalog.superstore_silver.products"
-#     gold_tbl: "superstore_catalog.superstore_gold.dim_products"
-#     metrics_table: "superstore_catalog.superstore_metrics.gold_layer_metrics"
-#     required_columns:
-#       - "product_id"
-#       - "product_name"
-#       - "category"
-#       - "sub_category"
-#       - "ingestion_ts"
-#       - "source_file_path"
-#       - "source_file_name"
-#     natural_keys:
-#       - "product_id"
-#     column_mapping:
-#       product_id: "product_id"
-#       product_name: "product_name"
-#       category: "category"
-#       sub_category: "sub_category"
-#       ingestion_ts: "ingestion_ts"
-#       source_file_path: "source_file_path"
-#       source_file_name: "source_file_name"
-#     hash_column: "dim_product_hash_id"
-#     silver_hash_column: "silver_products_hash_id"
-#     z_order_cols:
-#       - "category"
-#       - "sub_category"
-#     max_rows_per_bucket: 1000000

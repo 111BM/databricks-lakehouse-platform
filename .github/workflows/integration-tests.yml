@@ -1,0 +1,62 @@
+# ==============================================================================
+# Integration Tests - E2E Validation on QA
+# ==============================================================================
+# Runs AFTER deploy.yml successfully deploys QA. Tests the real pipeline
+# end-to-end: Bronze → Silver → Gold with assertions at each layer.
+#
+# Runtime: ~5-10 minutes on Databricks.
+#
+# Philosophy: Fail fast, no retries. If integration tests fail, QA is broken
+# and needs immediate human investigation, not automatic retries that mask the
+# root cause.
+# ==============================================================================
+
+name: Integration Tests (Databricks)
+
+on:
+  workflow_run:
+    workflows: ["Superstore Data Platform CI/CD"]
+    types: [completed]
+    branches: [qa]
+
+jobs:
+  integration-tests:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30  # Safety: prevent hung jobs
+    
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@main
+      
+      # Run integration tests (no retry - fail fast on real issues)
+      - name: Run integration test job
+        run: |
+          echo "Running E2E integration tests on QA..."
+          databricks bundle run superstore_integration_test --target qa
+          echo "✅ Integration tests passed!"
+      
+      # Capture job details for audit
+      - name: Capture test run details
+        if: always()
+        run: |
+          echo "Integration test completed" > integration-summary.txt
+          echo "Commit: ${{ github.event.workflow_run.head_sha }}" >> integration-summary.txt
+          echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> integration-summary.txt
+          echo "Status: ${{ job.status }}" >> integration-summary.txt
+      
+      - name: Upload test summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-summary
+          path: integration-summary.txt
+          retention-days: 90

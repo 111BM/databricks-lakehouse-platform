@@ -2,19 +2,59 @@ resources:
   jobs:
     superstore_data_platform:
       name: superstore_data_platform_${bundle.target}
-      description: Superstore_lakehouse_medallion_architecture
-
-      email_notifications:
-        on_start:
-          - bireshmoktan@gmail.com
-        on_success:
-          - bireshmoktan@gmail.com
-        on_failure:
-          - bireshmoktan@gmail.com
-      schedule:
-        quartz_cron_expression: 1 0 10 * * ?
-        timezone_id: Australia/Sydney
-        pause_status: UNPAUSED
+      description: |
+        Superstore Lakehouse ETL Pipeline - Medallion Architecture (Bronze → Silver → Gold)
+        
+        📋 PARAMETERS:
+        
+        backfill-mode (string):
+          • incremental  - Process only new data since last run (DEFAULT for scheduled runs)
+          • date_range   - Replay specific date range (requires start-date & end-date)
+          • full_refresh - Reprocess all data from scratch (DANGEROUS - use with caution)
+        
+        start-date (YYYY-MM-DD):
+          • Required for date_range mode
+          • Example: 2026-05-08
+          • Leave empty for incremental/full_refresh
+        
+        end-date (YYYY-MM-DD):
+          • Required for date_range mode
+          • Example: 2026-05-10
+          • Leave empty for incremental/full_refresh
+        
+        dry-run (true | false):
+          • true  - Validate without writing data (preview mode)
+          • false - Execute and write data (DEFAULT)
+        
+        💡 USAGE EXAMPLES:
+        
+        Normal Run:
+          backfill-mode: incremental
+          dry-run: false
+        
+        Replay 1 Day:
+          backfill-mode: date_range
+          start-date: 2026-05-08
+          end-date: 2026-05-08
+          dry-run: false
+        
+        Full Backfill:
+          backfill-mode: full_refresh
+          start-date: 
+          end-date: 
+          dry-run: false
+      
+      # Job-level parameters (visible in UI) - MUST use hyphens, not underscores
+      parameters:
+        - name: backfill-mode
+          default: ${var.backfill_mode}
+        - name: start-date
+          default: ${var.start_date}
+        - name: end-date
+          default: ${var.end_date}
+        - name: dry-run
+          default: ${var.dry_run}
+      
       tasks:
         - task_key: superstore_pipeline_master_run_id_init
           notebook_task:
@@ -24,18 +64,35 @@ resources:
               SUPERSTORE_ENV: ${var.SUPERSTORE_ENV}
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
-          environment_key: superstore_bronze_layer_environment
-        - task_key: superstore_bronze_layer
+          environment_key: superstore_bronze_layer_environment 
+        - task_key: superstore_catalog_and_schemas_init
           depends_on:
             - task_key: superstore_pipeline_master_run_id_init
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/superstore_orchestrator/layer_orchestrator/superstore_bronze_layer_ETL_orchestrator
+            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities/superstore_catalog_and_schemas_init
             base_parameters:
               SUPERSTORE_ENV: ${var.SUPERSTORE_ENV}
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
-              n_id}}"
+                n_id}}"
+            source: WORKSPACE
+        - task_key: superstore_bronze_layer
+          depends_on:
+            - task_key: superstore_pipeline_master_run_id_init
+            - task_key: superstore_catalog_and_schemas_init
+          notebook_task:
+            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/superstore_orchestrator/layer_orchestrator/superstore_bronze_layer_ETL_pipeline_orchestrator
+            base_parameters:
+              SUPERSTORE_ENV: ${var.SUPERSTORE_ENV}
+              SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
+              SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
+              master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
+                n_id}}"
+              backfill_mode: "{{job.parameters.backfill-mode}}"
+              start_date: "{{job.parameters.start-date}}"
+              end_date: "{{job.parameters.end-date}}"
+              dry_run: "{{job.parameters.dry-run}}"
             source: WORKSPACE
           environment_key: superstore_bronze_layer_environment
         - task_key: superstore_silver_layer
@@ -43,13 +100,17 @@ resources:
             - task_key: superstore_pipeline_master_run_id_init
             - task_key: superstore_bronze_layer
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/superstore_orchestrator/layer_orchestrator/superstore_silver_layer_ETL_orchestrator
+            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/superstore_orchestrator/layer_orchestrator/superstore_silver_layer_ETL_pipeline_orchestrator
             base_parameters:
               SUPERSTORE_ENV: ${var.SUPERSTORE_ENV}
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
                 n_id}}"
+              backfill_mode: "{{job.parameters.backfill-mode}}"
+              start_date: "{{job.parameters.start-date}}"
+              end_date: "{{job.parameters.end-date}}"
+              dry_run: "{{job.parameters.dry-run}}"
             source: WORKSPACE
           environment_key: superstore_bronze_layer_environment
         - task_key: superstore_gold_layer_dimensions
@@ -57,13 +118,17 @@ resources:
             - task_key: superstore_pipeline_master_run_id_init
             - task_key: superstore_silver_layer
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/superstore_orchestrator/layer_orchestrator/superstore_gold_dimensional_orchestrator
+            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/superstore_orchestrator/layer_orchestrator/superstore_gold_dimensional_ETL_pipeline_orchestrator
             base_parameters:
               SUPERSTORE_ENV: ${var.SUPERSTORE_ENV}
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
                 n_id}}"
+              backfill_mode: "{{job.parameters.backfill-mode}}"
+              start_date: "{{job.parameters.start-date}}"
+              end_date: "{{job.parameters.end-date}}"
+              dry_run: "{{job.parameters.dry-run}}"
             source: WORKSPACE
           environment_key: superstore_bronze_layer_environment
         - task_key: superstore_gold_layer_facts
@@ -71,13 +136,17 @@ resources:
             - task_key: superstore_pipeline_master_run_id_init
             - task_key: superstore_silver_layer
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/superstore_orchestrator/layer_orchestrator/superstore_gold_facts_orchestrator
+            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/superstore_orchestrator/layer_orchestrator/superstore_gold_facts_ETL_pipeline_orchestrator
             base_parameters:
               SUPERSTORE_ENV: ${var.SUPERSTORE_ENV}
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
                 n_id}}"
+              backfill_mode: "{{job.parameters.backfill-mode}}"
+              start_date: "{{job.parameters.start-date}}"
+              end_date: "{{job.parameters.end-date}}"
+              dry_run: "{{job.parameters.dry-run}}"
             source: WORKSPACE
           environment_key: superstore_bronze_layer_environment
         - task_key: features_customer
@@ -114,6 +183,12 @@ resources:
             notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/marts/mart_customer_360
             source: WORKSPACE
           environment_key: superstore_bronze_layer_environment
+        - task_key: customer_kpi_view
+          depends_on:
+            - task_key: mart_customer_360
+          notebook_task:
+            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/metrics/customer_kpi
+            source: WORKSPACE
         - task_key: mart_production_performance
           depends_on:
             - task_key: superstore_gold_layer_dimensions
@@ -122,6 +197,12 @@ resources:
             notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/marts/mart_production_performance
             source: WORKSPACE
           environment_key: superstore_bronze_layer_environment
+        - task_key: product_insights_kpi_view
+          depends_on:
+            - task_key: mart_production_performance
+          notebook_task:
+            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/metrics/product_insights_kpi
+            source: WORKSPACE
         - task_key: mart_sales_daily
           depends_on:
             - task_key: superstore_gold_layer_dimensions

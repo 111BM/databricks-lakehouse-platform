@@ -88,29 +88,84 @@ Best Practices / Notes:
 # -----------------------------
 # Spark Timezone Initialization
 # -----------------------------
+# Optional timezone override (kept commented to allow environment-level control)
 # spark.conf.set("spark.sql.session.timeZone", "Australia/Sydney")
-import builtins  # used for built-in round() in metrics calculation
-import time       # used for ETL timing
-import json, uuid  # json used in logger, uuid used for run IDs
-from pyspark.sql import DataFrame, Row  # Row used in metrics, DataFrame type hints
+
+# -----------------------------
+# Core Python Utilities
+# -----------------------------
+import builtins  # Used for built-in round() in metrics calculations
+import time       # Used for ETL execution timing and duration tracking
+import json, uuid  # json for logging payloads, uuid for unique run identifiers
+
+# -----------------------------
+# PySpark Core Types
+# -----------------------------
+from pyspark.sql import DataFrame, Row  # DataFrame typing and Row object for structured outputs
+
+# -----------------------------
+# PySpark Functions (Transformations & Metrics)
+# -----------------------------
 from pyspark.sql.functions import (
-    col, trim, regexp_replace, sha2, concat_ws, current_timestamp, from_utc_timestamp,
-    row_number, to_date, coalesce, max as spark_max, lit, spark_partition_id
+    col, trim, regexp_replace, sha2, concat_ws, current_timestamp,  # data cleaning & hashing
+    row_number, to_date, coalesce, max as spark_max, lit, try_to_date,          # windowing, casting, aggregation helpers
+    spark_partition_id, when, expr, size, array, array_union        # partition tracking, conditional logic, array ops
 )
-from pyspark.sql.window import Window  # used for deduplication
-from delta.tables import DeltaTable  # used for MERGE operations
+
+# -----------------------------
+# Window Functions
+# -----------------------------
+from pyspark.sql.window import Window  # Used for deduplication and ordering logic
+
+# -----------------------------
+# Delta Lake Operations
+# -----------------------------
+from delta.tables import DeltaTable  # Enables MERGE, UPDATE, DELETE operations on Delta tables
+
+# -----------------------------
+# Schema Definitions
+# -----------------------------
 from pyspark.sql.types import (
-    StructType, StructField, StringType, IntegerType, TimestampType, DateType, LongType, DoubleType
+    StructType, StructField, StringType, IntegerType,
+    TimestampType, DateType, LongType, DoubleType
 )
-# import pytz  # used for Sydney timezone conversion
-from uuid import uuid4
-import sys   # used to append path for shared utilities
 
+# -----------------------------
+# Optional Timezone Library
+# -----------------------------
+# import pytz  # Can be used for timezone conversions if required
+
+# -----------------------------
+# UUID Utilities
+# -----------------------------
+from uuid import uuid4  # Generates unique identifiers for tracking runs/events
+
+# -----------------------------
+# System Path Configuration
+# -----------------------------
+import sys   # Used to append path for shared utilities
+
+# Add shared utilities path (logging, config, helpers)
 sys.path.append("/Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities")
-from superstore_logger import get_superstore_logger, log_event  # custom logger
-from superstore_platform_constants import SILVER_LAYER
 
-from pyspark.sql import SparkSession
+# -----------------------------
+# Platform Utilities
+# -----------------------------
+from superstore_logger import get_superstore_logger, log_event          # Custom logging framework
+from superstore_platform_constants import SILVER_LAYER                  # Layer constant for Silver pipeline
+from superstore_backfill_utils import get_incremental_with_backfill     # backfill support
+from superstore_silver_transformations import (                                    # pure logic (unit-tested)
+    deduplicate_latest_wins,
+    row_hash,
+    clean_string_columns,
+    add_error_columns,
+    add_is_valid,
+)
+
+# -----------------------------
+# Spark Session (if needed locally)
+# -----------------------------
+from pyspark.sql import SparkSession  # Spark session reference (used if initialized here)
 
 # -----------------------------
 # Logger Setup for silver tranformation
@@ -118,117 +173,117 @@ from pyspark.sql import SparkSession
 # Initialize logger to capture events in the silver transformation pipeline
 logger_silver = get_superstore_logger("superstore_silver_module")
 
-def get_incremental_bronze(
-    spark: SparkSession,
-    bronze_table: str,
-    silver_table: str,
-    master_run_id: str,
-    layer_run_id: str,
-    ingestion_col: str = "ingestion_ts",
-    required_table: bool = False  # New flag: raise error if True, skip if False
-) -> DataFrame:
-    """
-    Returns only new Bronze rows not yet ingested into Silver.
-    Optimized for serverless / partitioned Bronze tables.
+# def get_incremental_bronze(
+#     spark: SparkSession,
+#     bronze_table: str,
+#     silver_table: str,
+#     master_run_id: str,
+#     layer_run_id: str,
+#     ingestion_col: str = "bronze_ingestion_ts",
+#     required_table: bool = False  # New flag: raise error if True, skip if False
+# ) -> DataFrame:
+#     """
+#     Returns only new Bronze rows not yet ingested into Silver.
+#     Optimized for serverless / partitioned Bronze tables.
     
-    Handles missing Bronze tables gracefully:
-    - If required_table=True: raises Exception
-    - If required_table=False: returns empty DataFrame
-    """
-    # -------------------------------
-    # Check if Bronze table exists
-    # -------------------------------
-    if not spark.catalog.tableExists(bronze_table):
-        msg = f"Source bronze table '{bronze_table}' does not exist"
-        if required_table:
-            log_event(
-                logger_silver,
-                "ERROR",
-                msg,
-                master_run_id=master_run_id,
-                layer_run_id=layer_run_id,
-                layer=SILVER_LAYER
-            )
-            raise Exception(msg)
-        else:
-            log_event(
-                logger_silver,
-                "WARN",
-                msg + ". Skipping.",
-                master_run_id=master_run_id,
-                layer_run_id=layer_run_id,
-                layer=SILVER_LAYER
-            )
-            # Return empty DataFrame with no schema
-            # return spark.createDataFrame([], schema=None)
-            return spark.createDataFrame([], StructType([]))
+#     Handles missing Bronze tables gracefully:
+#     - If required_table=True: raises Exception
+#     - If required_table=False: returns empty DataFrame
+#     """
+#     # -------------------------------
+#     # Check if Bronze table exists
+#     # -------------------------------
+#     if not spark.catalog.tableExists(bronze_table):
+#         msg = f"Source bronze table '{bronze_table}' does not exist"
+#         if required_table:
+#             log_event(
+#                 logger_silver,
+#                 "ERROR",
+#                 msg,
+#                 master_run_id=master_run_id,
+#                 layer_run_id=layer_run_id,
+#                 layer=SILVER_LAYER
+#             )
+#             raise Exception(msg)
+#         else:
+#             log_event(
+#                 logger_silver,
+#                 "WARN",
+#                 msg + ". Skipping.",
+#                 master_run_id=master_run_id,
+#                 layer_run_id=layer_run_id,
+#                 layer=SILVER_LAYER
+#             )
+#             # Return empty DataFrame with no schema
+#             # return spark.createDataFrame([], schema=None)
+#             return spark.createDataFrame([], StructType([]))
     
-    # -------------------------------
-    # Log start of incremental fetch
-    # -------------------------------
-    log_event(
-        logger_silver,
-        "INFO",
-        f"Fetching incremental rows from Bronze table '{bronze_table}' for Silver table '{silver_table}'",
-        master_run_id=master_run_id,
-        layer_run_id=layer_run_id,
-        layer=SILVER_LAYER,
-        ingestion_col=ingestion_col
-    )
+#     # -------------------------------
+#     # Log start of incremental fetch
+#     # -------------------------------
+#     log_event(
+#         logger_silver,
+#         "INFO",
+#         f"Fetching incremental rows from Bronze table '{bronze_table}' for Silver table '{silver_table}'",
+#         master_run_id=master_run_id,
+#         layer_run_id=layer_run_id,
+#         layer=SILVER_LAYER,
+#         ingestion_col=ingestion_col
+#     )
     
-    # -------------------------------
-    # Determine last ingestion timestamp from Silver
-    # -------------------------------
-    max_ingestion_ts = None
-    if spark.catalog.tableExists(silver_table):
-        max_ingestion_ts_row = (
-            spark.table(silver_table)
-            .agg(spark_max(ingestion_col).alias("max_ingest_ts"))
-            .first()
-        )
-        max_ingestion_ts = max_ingestion_ts_row["max_ingest_ts"]
-        log_event(
-            logger_silver,
-            "INFO",
-            f"Max ingestion timestamp found in Silver table '{silver_table}': {max_ingestion_ts}",
-            master_run_id=master_run_id,
-            layer_run_id=layer_run_id,
-            layer=SILVER_LAYER
-        )
+#     # -------------------------------
+#     # Determine last ingestion timestamp from Silver
+#     # -------------------------------
+#     max_bronze_ingestion_ts = None
+#     if spark.catalog.tableExists(silver_table):
+#         max_bronze_ingestion_ts_row = (
+#             spark.table(silver_table)
+#             .agg(spark_max(ingestion_col).alias("max_ingest_ts"))
+#             .first()
+#         )
+#         max_bronze_ingestion_ts = max_bronze_ingestion_ts_row["max_ingest_ts"]
+#         log_event(
+#             logger_silver,
+#             "INFO",
+#             f"Max ingestion timestamp found in Silver table '{silver_table}': {max_bronze_ingestion_ts}",
+#             master_run_id=master_run_id,
+#             layer_run_id=layer_run_id,
+#             layer=SILVER_LAYER
+#         )
     
-    # -------------------------------
-    # Read Bronze table
-    # -------------------------------
-    bronze_df = spark.table(bronze_table)
+#     # -------------------------------
+#     # Read Bronze table
+#     # -------------------------------
+#     bronze_df = spark.table(bronze_table)
     
-    # Apply incremental filter if Silver has data
-    if max_ingestion_ts:
-        incremental_df = bronze_df.filter(col(ingestion_col) > max_ingestion_ts)
-    else:
-        incremental_df = bronze_df
-        log_event(
-            logger_silver,
-            "INFO",
-            f"Silver table '{silver_table}' does not exist. Returning full Bronze table.",
-            master_run_id=master_run_id,
-            layer_run_id=layer_run_id,
-            layer=SILVER_LAYER
-        )
+#     # Apply incremental filter if Silver has data
+#     if max_bronze_ingestion_ts:
+#         incremental_df = bronze_df.filter(col(ingestion_col) > max_bronze_ingestion_ts)
+#     else:
+#         incremental_df = bronze_df
+#         log_event(
+#             logger_silver,
+#             "INFO",
+#             f"Silver table '{silver_table}' does not exist. Returning full Bronze table.",
+#             master_run_id=master_run_id,
+#             layer_run_id=layer_run_id,
+#             layer=SILVER_LAYER
+#         )
     
-    # -------------------------------
-    # Log row count
-    # -------------------------------
-    row_count = incremental_df.limit(1).count()  # cheaper than full count
-    log_event(
-        logger_silver,
-        "INFO",
-        f"Incremental Bronze rows to process: {row_count}",
-        master_run_id=master_run_id,
-        layer_run_id=layer_run_id,
-        layer=SILVER_LAYER
-    )
+#     # -------------------------------
+#     # Log row count
+#     # -------------------------------
+#     has_data = incremental_df.limit(1).count() > 0
+#     log_event(
+#         logger_silver,
+#         "INFO",
+#         f"Incremental Bronze rows to process: {has_data}",
+#         master_run_id=master_run_id,
+#         layer_run_id=layer_run_id,
+#         layer=SILVER_LAYER
+#     )
     
-    return incremental_df
+#     return incremental_df
 
 # -------------------------------
 # Bronze → Silver ETL
@@ -240,7 +295,10 @@ def bronze_to_silver_prod(
     audit_table: str,
     master_run_id:str ,
     layer_run_id: str,
+    backfill_config: dict,  # backfill parameter
     business_keys: list,
+    business_columns: list,
+    meta_columns: list,
     numeric_cast_cols: dict,
     regex_cols: dict = {},
     date_cast_cols: dict = {},
@@ -275,17 +333,20 @@ def bronze_to_silver_prod(
     # -------------------------------
     # Default metrics initialization (for failure safety)
     # -------------------------------
-    total_rows = 0
+    read_rows = 0
     good_count = 0
     dirty_count = 0
     dedups_count = 0
     dups_count = 0
     throughput_rows_per_sec = 0
     skew_ratio = 0.0
-    run_status = "started"
-    notes = ""
-    
+    run_status = "SUCCESS"
+    load_type= None
+    notes = None
 
+    inserted_rows = 0
+    updated_rows = 0
+    unchanged_rows = 0
 
 
     # -------------------------------
@@ -302,21 +363,31 @@ def bronze_to_silver_prod(
         # Step 1: Read Bronze table
         # -------------------------------
         # Read the Delta table into a DataFrame incrementally
-        df = get_incremental_bronze(spark, bronze_table, silver_table, master_run_id=master_run_id, layer_run_id=layer_run_id, ingestion_col="ingestion_ts")
-        # Case: Bronze table missing
-        if len(df.columns) == 0:
-            notes = "no table found in source"
+        # df = get_incremental_bronze(spark, bronze_table, silver_table, master_run_id=master_run_id, layer_run_id=layer_run_id, ingestion_col="bronze_ingestion_ts")
 
+        df = get_incremental_with_backfill(
+            spark=spark,
+            source_table=bronze_table,
+            target_table=silver_table,
+            backfill_config=backfill_config,  # New parameter
+            master_run_id=master_run_id,
+            layer_run_id=layer_run_id,
+            layer=SILVER_LAYER,
+            ingestion_col="bronze_ingestion_ts",
+            date_partition_col="ingestion_date"
+        )
+
+        # Case 1: Bronze table missing
+        if df is None:
             log_event(
                 logger_silver,
                 "WARN",
-                "No table found in source",
+                "No table found in bronze: '{bronze_table}'",
                 table=bronze_table,
                 master_run_id=master_run_id,
                 layer_run_id=layer_run_id,
                 layer=SILVER_LAYER
             )
-
             return {
                 "master_run_id": master_run_id,
                 "layer_run_id": layer_run_id,
@@ -324,14 +395,18 @@ def bronze_to_silver_prod(
                 "table_name": bronze_table,
                 "start_ts": start_ts,
                 "end_ts": start_ts,
-                "total_rows": 0,
+                "read_rows": 0,
                 "good_rows": 0,
                 "dirty_rows": 0,
                 "deduplicated_rows": 0,
                 "duplicate_rows": 0,
+                "inserted_rows" : 0,
+                "updated_rows" : 0,
+                "unchanged_rows" : 0,
                 "throughput_rows_per_sec": 0,
-                "skew_ratio": 0,
-                "run_status": "skipped",
+                "skew_ratio": 0.0,
+                "run_status": "success",
+                "load_type" : "NO_DATA",
                 "duration_secs": 0,
                 "notes": f"Source silver table '{bronze_table}' does not exist",
                 "metrics_table": metrics_table
@@ -340,7 +415,7 @@ def bronze_to_silver_prod(
         # Check for rows in bronze table
         has_incremental_rows = df.head(1)
 
-        #case 1: Dataframe has no rows
+        #case 2: Dataframe has no rows
         if not has_incremental_rows:
             log_event(logger_silver,"INFO", "No new rows or files to process; continuing with empty dataframe", table=bronze_table, master_run_id=master_run_id, layer_run_id=layer_run_id, layer=SILVER_LAYER)
             return {
@@ -350,89 +425,137 @@ def bronze_to_silver_prod(
                 "table_name": bronze_table,
                 "start_ts": spark.sql("SELECT current_timestamp() as ts").first()["ts"],
                 "end_ts": spark.sql("SELECT current_timestamp() as ts").first()["ts"],
-                "total_rows": 0,
+                "read_rows": 0,
                 "good_rows": 0,
                 "dirty_rows": 0,
                 "deduplicated_rows": 0,
                 "duplicate_rows": 0,
-                "run_status": "skipped",
+                "inserted_rows" : 0,
+                "updated_rows" : 0,
+                "unchanged_rows" : 0,
+                "throughput_rows_per_sec" : 0,
+                "skew_ratio": 0,
+                "run_status": "SKIPPED",
+                "load_type" : "NO_DATA",
                 "duration_secs": 0,
-                "notes": f"Source silver table '{bronze_table}' does not have new rows",
+                "notes":f"No incremental rows in silver table '{bronze_table}'",
                 "metrics_table": metrics_table
             }
-
+            
         else:
             # Case 2: DataFrame has rows
-            total_rows = df.count()  # Get the total number of rows for logging
+            read_rows = df.count()  # Get the total number of rows for logging
             log_event(logger_silver, 
                     "INFO", "Total new rows in Bronze table", 
                     table=bronze_table, 
-                    total_rows=total_rows,
+                    read_rows=read_rows,
                     master_run_id=master_run_id,
                     layer_run_id=layer_run_id,
                     layer=SILVER_LAYER
                 )
 
+            # Separate business and metadata columns
+            business_cols = [c for c in business_columns if c in df.columns]
+            metadata_cols = [c for c in df.columns if c not in business_cols]
+
             # -------------------------------
-            # Step 2: Clean columns
+            # Step 2: Clean columns (trim + strip quotes) — extracted, unit-tested
             # -------------------------------
-            clean_df = df
-            for column_name in df.columns:
-                col_type = df.schema[column_name].dataType
-                if isinstance(col_type, StringType):
-                    clean_df = clean_df.withColumn(
-                    column_name,
-                    regexp_replace(trim(col(column_name)), '"', '')
-                )
-                elif isinstance(col_type, (TimestampType, DateType)):
-                    # convert to string, clean, then cast back
-                    clean_df = clean_df.withColumn(
-                        column_name,
-                        regexp_replace(trim(col(column_name).cast("string")), '"', '').cast(col_type)
-                    )
+            clean_df = clean_string_columns(df, business_columns)
 
 
             # -------------------------------
             # Step 3: Data Quality Checks
             # -------------------------------
-            dq_df = clean_df
-            is_any_dirty_col = None
+            # first approach
+            # dq_df = clean_df
+            # is_any_dirty_col = None
 
-            # Null checks for all columns
-            for c in df.columns:
-                col_dirty = col(c).isNull()
-                dq_df = dq_df.withColumn(f"is_{c}_dirty", col_dirty)
-                is_any_dirty_col = col_dirty if is_any_dirty_col is None else is_any_dirty_col | col_dirty
+            # # Null checks for all columns
+            # for c in business_cols:
+            #     col_dirty = col(c).isNull()
+            #     dq_df = dq_df.withColumn(f"is_{c}_dirty", col_dirty)
+            #     is_any_dirty_col = col_dirty if is_any_dirty_col is None else is_any_dirty_col | col_dirty
 
-            # Regex validation for configured columns
-            for c, regex in regex_cols.items():
+            # # Regex validation for configured columns
+            # for c, regex in regex_cols.items():
+            #     dq_df = dq_df.withColumn(
+            #         f"is_{c}_dirty",
+            #         (~col(c).rlike(regex)) | col(f"is_{c}_dirty")
+            #     )
+            #     is_any_dirty_col = is_any_dirty_col | (~col(c).rlike(regex))
+
+            # # Categorical allowed values check
+            # for c, allowed_vals in categorical_allowed_vals.items():
+            #     dq_df = dq_df.withColumn(
+            #         f"is_{c}_dirty",
+            #         (~col(c).isin(allowed_vals)) | col(f"is_{c}_dirty")
+            #     )
+            #     is_any_dirty_col = is_any_dirty_col | (~col(c).isin(allowed_vals))
+
+            # # Aggregate flag for any dirty column
+            # dq_df = dq_df.withColumn("is_any_dirty", is_any_dirty_col)
+
+            # Data quality: build error_columns (null + regex + categorical) — extracted, unit-tested
+            dq_df = add_error_columns(clean_df, business_columns, regex_cols, categorical_allowed_vals)
+
+            # Business rule: ship_date should not be before order_date
+            if "order_date" in business_columns and "ship_date" in business_columns:
+                date_formats = [
+                    "d/M/yyyy", 
+                    "dd-MM-yyyy",
+                    "yyyy-MM-dd",
+                    "dd/MM/yyyy",
+                    "yyyy/MMM/d",
+                    "yyyy MMM d",
+                    "d MMMM yyyy"
+                ]
+
+                def parse_multi_format_date(column_name):
+                    return coalesce(*[
+                        try_to_date(col(column_name), fmt)
+                        for fmt in date_formats
+                    ])
+
                 dq_df = dq_df.withColumn(
-                    f"is_{c}_dirty",
-                    (~col(c).rlike(regex)) | col(f"is_{c}_dirty")
+                    "order_date_dt",
+                    parse_multi_format_date("order_date")
+                ).withColumn(
+                    "ship_date_dt",
+                    parse_multi_format_date("ship_date")
                 )
-                is_any_dirty_col = is_any_dirty_col | (~col(c).rlike(regex))
 
-            # Categorical allowed values check
-            for c, allowed_vals in categorical_allowed_vals.items():
+                
                 dq_df = dq_df.withColumn(
-                    f"is_{c}_dirty",
-                    (~col(c).isin(allowed_vals)) | col(f"is_{c}_dirty")
+                    "error_columns",
+                    when(
+                        col("ship_date_dt") < col("order_date_dt"),
+                        array_union(col("error_columns"), array(lit("ship_date_before_order_date")))
+                    ).otherwise(col("error_columns"))
                 )
-                is_any_dirty_col = is_any_dirty_col | (~col(c).isin(allowed_vals))
-
-            # Aggregate flag for any dirty column
-            dq_df = dq_df.withColumn("is_any_dirty", is_any_dirty_col)
+                    
+            
+            # Set is_valid based on error_columns — extracted, unit-tested
+            dq_df = add_is_valid(dq_df)
 
             log_event(logger_silver, "INFO", "Data quality rules applied", table=bronze_table, master_run_id=master_run_id, layer_run_id=layer_run_id, layer=SILVER_LAYER)
+
 
             # -------------------------------
             # Step 4: Separate good vs dirty rows
             # -------------------------------
-            good_rows_df = dq_df.filter(~col("is_any_dirty"))  # Keep rows that pass all data quality checks
-            dirty_rows_df = dq_df.filter(col("is_any_dirty"))  # Rows that failed data quality checks
+
+            # first apparoach
+            # good_rows_df = dq_df.filter(~col("is_any_dirty"))  # Keep rows that pass all data quality checks
+            # dirty_rows_df = dq_df.filter(col("is_any_dirty"))  # Rows that failed data quality checks
+
+            # second appraoch
+            good_rows_df = dq_df.filter(col("is_valid") == True)
+            dirty_rows_df = dq_df.filter(col("is_valid") == False)
 
             good_count=good_rows_df.count()
             dirty_count=dirty_rows_df.count()
+            # invalid_numeric_count=invalid_numeric_df.count()
 
             log_event(logger_silver, 
                     "INFO", "Bronze to Silver row counts", 
@@ -449,38 +572,59 @@ def bronze_to_silver_prod(
             # -------------------------------
             if dirty_rows_df.head(1):  # Proceed only if there are dirty rows
                 # Generate a SHA-256 hash for each dirty row based on its full content
-                # The hash ensures uniqueness for deduplication and auditing purposes
+                # The hash ensures uniqueness for quarantine table purposes
+                dirty_selected_cols = [*business_columns, *meta_columns, "error_columns", "is_valid"]
                 dirty_rows_df = (
-                    dirty_rows_df
-                    .withColumn(quarantine_col, sha2(concat_ws("||", *dirty_rows_df.columns), 256))  # Generate SHA-256 hash for full row
-                    .withColumn(
-                        "quarantine_ts",
-                        from_utc_timestamp(current_timestamp(), "Australia/Sydney")  # Add timestamp for tracking
-                    )
-                    .dropDuplicates([quarantine_col])  # Deduplicate dirty rows using their hash
+                    dirty_rows_df.select(*dirty_selected_cols)
+                    # Generate SHA-256 hash for full row (shared row_hash() helper)
+                    .withColumn(quarantine_col, row_hash(business_columns))
+                    .withColumn("quarantine_ingestion_ts", current_timestamp())  # Add timestamp for tracking
                 )
-
-            # Merge dirty rows into the quarantine table using the hash as the matching key
+    
+                # Append into quarantine table
                 if quarantine_table:
+                    # -----------------------------------
+                    # STEP 1: Create table if NOT exists
+                    # -----------------------------------
                     if not spark.catalog.tableExists(quarantine_table):
-                        # If the quarantine table doesn't exist, create an empty one
-                        dirty_rows_df.limit(0).write.format("delta").saveAsTable(quarantine_table)
-                        log_event(logger_silver, "INFO", "Created quarantine table", table=quarantine_table, master_run_id=master_run_id, layer_run_id=layer_run_id, layer=SILVER_LAYER)
 
-                    # Repartition by the hash column for more efficient processing
-                    dirty_rows_df = dirty_rows_df.repartition(shuffle_partitions, col(quarantine_col))
-                    DeltaTable.forName(spark, quarantine_table).alias("tgt").merge(
-                        dirty_rows_df.alias("src"),
-                        f"tgt.{quarantine_col} = src.{quarantine_col}"  # Match on the hash column
-                    ).whenNotMatchedInsertAll().execute()
-                    log_event(logger_silver, 
-                            "INFO", 
-                            "Quarantined dirty rows", 
-                            table=quarantine_table,
+                        (dirty_rows_df
+                            .limit(0)
+                            .write
+                            .format("delta")
+                            .mode("overwrite")
+                            .option("overwriteSchema", "true")
+                            .saveAsTable(quarantine_table)
+                        )
+
+                        log_event(
+                            logger_silver,
+                            "INFO",
+                            "Created quarantine table with schema",
                             master_run_id=master_run_id,
                             layer_run_id=layer_run_id,
                             layer=SILVER_LAYER
                         )
+
+                    # -----------------------------------
+                    # STEP 2: Append dirty rows
+                    # -----------------------------------
+                    (dirty_rows_df
+                        .write
+                        .format("delta")
+                        .mode("append")
+                        .saveAsTable(quarantine_table)
+                    )
+
+                    log_event(
+                        logger_silver,
+                        "INFO",
+                        "Dirty rows appended to quarantine table",
+                        master_run_id=master_run_id,
+                        layer_run_id=layer_run_id,
+                        layer=SILVER_LAYER
+                    )
+
 
             # -------------------------------
             # Step 6a: Cast numeric columns
@@ -502,7 +646,7 @@ def bronze_to_silver_prod(
                 )
 
             # Step 6b: Cast string columns to DATE only if they are of StringType
-            date_formats = ["dd-MM-yyyy", "yyyy-MM-dd", "dd/MM/yyyy", "yyyy/MMM/d", "yyyy MMM d", "d MMMM yyyy"]
+            date_formats = ["d/M/yyyy", "dd-MM-yyyy", "yyyy-MM-dd", "dd/MM/yyyy", "yyyy/MMM/d", "yyyy MMM d", "d MMMM yyyy"]
 
             # Explicitly cast order_date and ship_date to DateType using different formats if they are strings
             silver_cast_df = silver_df
@@ -515,7 +659,7 @@ def bronze_to_silver_prod(
                         # Try different date formats and coalesce the results to avoid nulls
                         silver_cast_df = silver_cast_df.withColumn(
                             c,
-                            coalesce(*[to_date(col(c), f) for f in date_formats])  # Use multiple formats
+                            coalesce(*[try_to_date(col(c), f) for f in date_formats])  # Use multiple formats
                         )
                     # If the column is already a DateType, skip casting and leave it as is
                     elif column_type == DateType():
@@ -527,7 +671,7 @@ def bronze_to_silver_prod(
             # -----------------------------
             # Throughput
             # -----------------------------
-            throughput_rows_per_sec = round(total_rows / max(int(time.time() - start_time_epoch), 1),2)
+            throughput_rows_per_sec = round(read_rows / max(int(time.time() - start_time_epoch), 1),2)
 
             # -----------------------------
             # Skew Calculation (Serverless safe)
@@ -551,34 +695,21 @@ def bronze_to_silver_prod(
 
             except Exception:
                 skew_ratio = 0.0
-
-
+            
 
             # -------------------------------
             # Step 7: Deduplication & audit
             # -------------------------------
-            # Deduplication: We want to keep only the latest record based on business keys
+            # Deduplication: keep only the latest record per business key.
+            # Logic extracted to deduplicate_latest_wins() so it can be unit tested.
             silver_df = silver_cast_df.repartition(shuffle_partitions, *business_keys)  # Repartition by business keys
 
-            window_spec = Window.partitionBy(*business_keys).orderBy(col("ingestion_ts").desc())  # Keep the latest row
-
-            # Deduplicated rows
-            silver_dedup_df = (
-                silver_df
-                .withColumn("row_num", row_number().over(window_spec))  # Assign row numbers to rows within each business key partition
-                .filter(col("row_num") == 1)  # Keep only the latest (row_num = 1) record for each business key
-                .drop("row_num")  # Drop the row number column
+            silver_dedup_df, silver_dup_df = deduplicate_latest_wins(
+                silver_df,
+                business_keys=business_keys,
+                order_col="bronze_ingestion_ts",
             )
-
-            # Duplicate rows (records that were filtered out in the deduplication step)
-            silver_dup_df = (
-                silver_df
-                .withColumn("row_num", row_number().over(window_spec))  # Assign row numbers to all records
-                .filter(col("row_num") > 1)  # Keep only rows that are considered duplicates (row_num > 1)
-            )
-
             
-
             # -------------------------------
             # Step 7a: Merge into Silver
             # -------------------------------
@@ -588,11 +719,13 @@ def bronze_to_silver_prod(
             else:
                 # Proceed only if Silver has rows to insert
                 # Generate a SHA-256 hash for each dedups row based on its full content
-                # The hash ensures uniqueness for deduplication and auditing purposes
+                # The hash ensures uniqueness for deduplication and auditing purposes dup_columns = [c for c in silver_dup_df.columns if c not in ["row_num"]]
+                dedups_selected_cols = [*business_columns, *meta_columns, "error_columns", "is_valid"]
                 silver_dedup_df = (
-                    silver_dedup_df
-                    .withColumn(silver_col, sha2(concat_ws("||", *df.columns), 256))  # Generate SHA-256 hash for full row
-                    .dropDuplicates([silver_col])  # Deduplicate dedups rows using their hash
+                    silver_dedup_df.select(*dedups_selected_cols)
+                    .withColumn(silver_col, row_hash(business_columns))  # Generate SHA-256 hash (shared helper)
+                    .withColumn("silver_ingestion_ts", current_timestamp())  # Add timestamp for tracking
+                    # .dropDuplicates([silver_col])  # Deduplicate dedups rows using their hash
                     .repartition(shuffle_partitions, col(silver_col))
                 )
 
@@ -604,16 +737,103 @@ def bronze_to_silver_prod(
                         log_event(logger_silver, "INFO", "Created silver table", table=silver_table, master_run_id=master_run_id, layer_run_id=layer_run_id, layer=SILVER_LAYER)
 
                     # Repartition by the hash column for more efficient processing
-                    # silver_dedup_df = silver_dedup_df.repartition(shuffle_partitions, col(silver_col))
-                    DeltaTable.forName(spark, silver_table).alias("tgt").merge(
-                        silver_dedup_df.alias("src"),
-                        f"tgt.{silver_col} = src.{silver_col}"  # Match on the hash column
-                    ).whenMatchedUpdateAll().whenNotMatchedInsertAll().execute()
+                    silver_dedup_df = silver_dedup_df.repartition(shuffle_partitions, col(silver_col))
 
-                    log_event(logger_silver, "INFO", "Silver table updated", table=silver_table, master_run_id=master_run_id, layer_run_id=layer_run_id, layer=SILVER_LAYER)
+                    # Track the count of rows dedups rows before merge
+                    dedup_rows = silver_dedup_df.count()
+
+                    # -----------------------------
+                    # Determine Gold table load state
+                    # -----------------------------
+                    # target_exists  → checks whether the Gold table is present in the metastore
+                    # target_empty   → checks whether the table exists but has no data
+                    #
+                    # This logic defines the execution mode for SCD2 processing:
+                    #
+                    # INITIAL_LOAD   → Gold table is empty (first-time full load)
+                    # SCD2_APPLIED   → Gold table already contains data and will undergo incremental SCD2 merge
+                    #
+                    # This mode is later used for observability, audit metrics, and pipeline behavior tracking.
+                    # -----------------------------
+                    target_exists = spark.catalog.tableExists(silver_table)
+
+                    target_empty = (
+                        spark.table(silver_table).limit(1).count() == 0
+                    )
+    
+                    #Silver dedups merge condition
+                    merge_condition = " AND ".join([f"tgt.{k} = src.{k}" for k in business_keys])
+
+                    # Exclude business keys from updates to preserve row identity.
+                    #Only non-key attributes (business + metadata columns) are allowed to be updated in MERGE.
+                    exclude_cols = set(business_keys)
+                    
+                    # Update columns
+                    update_columns = [
+                        c for c in silver_dedup_df.columns
+                        if c not in exclude_cols
+                    ]
+
+                    silver_delta = DeltaTable.forName(spark, silver_table)
+                    
+                    # Merge Operation
+                    (
+                        silver_delta.alias("tgt").merge(
+                            silver_dedup_df.alias("src"),
+                            merge_condition
+                        ).whenMatchedUpdate(
+                            # condition=f"tgt.{silver_col} != src.{silver_col}",
+                            set={c: f"src.{c}" for c in update_columns}
+                            ).whenNotMatchedInsertAll().execute()
+                    )
+
+                    # --- METRICS: read immediately after merge ---
+                    hist = silver_delta.history(1).select("operationMetrics").collect()[0][0]
+
+                    #Delta lake merge operation without hash condition in matched section will render below for merge metrics
+                    inserted_rows = int(hist.get("numTargetRowsInserted", 0)) # Truly new business keys
+                    updated_rows = int(hist.get("numTargetRowsUpdated", 0)) # Existing keys (changed + unchanged)
+
+                    # -----------------------------
+                    # DERIVED
+                    # -----------------------------
+                    # dedups rows is the good rows which were only done merge 
+                    # 'Always 0 in Silver (hash condition disabled). See Gold metrics for actual unchanged tracking.'
+                    unchanged_rows = max(dedup_rows - (inserted_rows + updated_rows), 0)
+
+                    has_changes = (inserted_rows + updated_rows) > 0
+
+                    # -----------------------------
+                    # Status + load_type
+                    # -----------------------------
+                    if target_empty:
+                        run_status = "SUCCESS"
+                        load_type = "INITIAL_LOAD"
+                        notes = f"Initial load completed for {silver_table}"
+
+                    elif not has_changes:
+                        run_status = "SUCCESS"
+                        load_type = "INCREMENTAL"
+                        notes = f"No changes detected for {silver_table}"
+
+                    else:
+                        run_status = "SUCCESS"
+                        load_type = "INCREMENTAL"
+                        notes = f"Data successfully merged into target table {silver_table}"
+
+                    log_event(
+                        logger_silver, 
+                              "INFO",
+                              f"Silver merge completed. Inserted {inserted_rows} rows, Unchanged {unchanged_rows}, Updated_rows {updated_rows} rows",
+                               table=silver_table, 
+                               master_run_id=master_run_id, 
+                               layer_run_id=layer_run_id, 
+                               layer=SILVER_LAYER
+                            )
                 else:
                     log_event(logger_silver, "INFO", "No deduplicates found; silver table not updated", master_run_id=master_run_id, layer_run_id=layer_run_id, layer=SILVER_LAYER)
 
+                
             # -------------------------------
             # Step 7b: Merge duplicates into audit
             #-------------------------------
@@ -623,34 +843,64 @@ def bronze_to_silver_prod(
             else:
                 # Only proceed if there are duplicates
                 # Generate hash using the actual columns in silver_dup_df, not original Bronze df
-                dup_columns = [c for c in silver_dup_df.columns if c not in ["row_num"]]
+                dups_selected_cols = [*business_columns, *meta_columns, "error_columns", "is_valid"]
                 silver_dup_df = (
-                    silver_dup_df
-                    .withColumn(duplicate_col, sha2(concat_ws("||", *dup_columns), 256))
-                    # .dropDuplicates([duplicate_col])
+                    silver_dup_df.select(*dups_selected_cols)
+                    .withColumn(duplicate_col, row_hash(business_columns))
+                    .withColumn("audit_ingestion_ts", current_timestamp())
+                    .withColumn("record_type", lit("duplicate"))
                     .repartition(shuffle_partitions, col(duplicate_col))
                 )
 
-                # Merge into audit table
+                # Append into audit table
                 if audit_table:
+                    # -----------------------------------
+                    # STEP 1: Create audit table if NOT exists
+                    # -----------------------------------
                     if not spark.catalog.tableExists(audit_table):
-                        silver_dup_df.limit(0).write.format("delta").saveAsTable(audit_table)
-                        log_event(logger_silver, "INFO", "Created audit table", table=audit_table, master_run_id=master_run_id, layer_run_id=layer_run_id, layer=SILVER_LAYER)
 
-                    DeltaTable.forName(spark, audit_table).alias("tgt").merge(
-                        silver_dup_df.alias("src"),
-                        f"tgt.{duplicate_col} = src.{duplicate_col}"
-                    ).whenNotMatchedInsertAll().execute()
-                    log_event(logger_silver, "INFO", "Audit table updated", table=audit_table, master_run_id=master_run_id, layer_run_id=layer_run_id, layer=SILVER_LAYER)
+                        (silver_dup_df
+                            .limit(0)
+                            .write
+                            .format("delta")
+                            .mode("overwrite")
+                            .option("overwriteSchema", "true")
+                            .saveAsTable(audit_table)
+                        )
 
-                else:
-                    log_event(logger_silver, "INFO", "No duplicates found; audit table not updated", master_run_id=master_run_id, layer_run_id=layer_run_id, layer=SILVER_LAYER)
+                        log_event(
+                            logger_silver,
+                            "INFO",
+                            "Created audit table with schema",
+                            master_run_id=master_run_id,
+                            layer_run_id=layer_run_id,
+                            layer=SILVER_LAYER
+                        )
+
+                    # -----------------------------------
+                    # STEP 2: Append duplicate rows
+                    # -----------------------------------
+                    (silver_dup_df
+                        .write
+                        .format("delta")
+                        .mode("append")
+                        .saveAsTable(audit_table)
+                    )
+
+                    log_event(
+                        logger_silver,
+                        "INFO",
+                        "Duplicate rows appended to audit table",
+                        master_run_id=master_run_id,
+                        layer_run_id=layer_run_id,
+                        layer=SILVER_LAYER
+                    )
 
 
             # -------------------------------
-            # Step 8: Metrics & logging
+            # Step 8: Metrics
             # -------------------------------
-            total = silver_df.count()  # Total rows in Silver
+            total = silver_df.count()  # Total rows read in Silver
             dedups_count = silver_dedup_df.count()  # Deduplicated rows count
             dups_count = silver_dup_df.count()  # Duplicate rows count
             dedup_pct = builtins.round((dedups_count / total) * 100, 2) if total > 0 else 0
@@ -661,17 +911,17 @@ def bronze_to_silver_prod(
                 "INFO",
                 "Silver summary",
                 table=bronze_table,
-                total_rows=total,
+                read_rows=total,
                 deduplicates=dedups_count,
                 dedup_pct=dedup_pct,
+                unchanged_rows=unchanged_rows,
                 duplicates=dups_count,
                 dup_pct=dup_pct,
                 master_run_id=master_run_id,
                 layer_run_id=layer_run_id, 
                 layer=SILVER_LAYER
             )
-            run_status = "success"
-            notes = ""
+            
     except Exception as e:
             run_status = "failure"
             notes = str(e)
@@ -688,13 +938,17 @@ def bronze_to_silver_prod(
         "master_run_id":master_run_id,
         "layer": layer_name,
         "table_name": silver_table,
+        "load_type" : load_type,
         "start_ts": start_ts,
         "end_ts": end_ts,
-        "total_rows": total_rows,
+        "read_rows": read_rows,
         "good_rows": good_count,
         "dirty_rows": dirty_count,
         "deduplicated_rows": dedups_count,
+        "unchanged_rows": unchanged_rows,
         "duplicate_rows": dups_count,
+        "inserted_rows" : inserted_rows,
+        "updated_rows" : updated_rows,
         "throughput_rows_per_sec": throughput_rows_per_sec,
         "skew_ratio": skew_ratio,
         "run_status": run_status,
@@ -712,13 +966,17 @@ def write_etl_metrics(
     layer_name: str,
     table_name: str,
     read_from_table: str,
+    load_type : str,
     start_ts,
     end_ts,
-    total_rows: int,
+    read_rows: int,
     good_rows: int,
     dirty_rows: int,
     deduplicated_rows: int,
+    unchanged_rows: int,
     duplicate_rows: int,
+    inserted_rows: int,
+    updated_rows : int,
     throughput_rows_per_sec: float,
     skew_ratio: float,
     run_status: str,
@@ -748,17 +1006,20 @@ def write_etl_metrics(
         # -----------------------------
         # Ensure defaults for empty or None inputs
         # -----------------------------
-        total_rows = total_rows or 0
+        read_rows = read_rows or 0
         good_rows = good_rows or 0
         dirty_rows = dirty_rows or 0
         deduplicated_rows = deduplicated_rows or 0
+        unchanged_rows= unchanged_rows or 0
         duplicate_rows = duplicate_rows or 0
+        inserted_rows = inserted_rows or 0
         duration_secs = duration_secs or 0
         throughput_rows_per_sec = throughput_rows_per_sec or 0.0
         skew_ratio = skew_ratio or 0.0
         start_ts = start_ts or spark.sql("SELECT current_timestamp() as ts").first()["ts"]
         end_ts = end_ts or spark.sql("SELECT current_timestamp() as ts").first()["ts"]
-        notes = notes or ("No rows/files processed" if total_rows == 0 else "")
+        load_type = load_type or None
+        notes = notes or None
 
 
         # -----------------------------
@@ -774,14 +1035,18 @@ def write_etl_metrics(
             start_ts TIMESTAMP,
             end_ts TIMESTAMP,
             duration_secs INT,
-            total_rows BIGINT,
+            read_rows BIGINT,
             good_rows BIGINT,
             dirty_rows BIGINT,
             deduplicated_rows BIGINT,
             duplicate_rows BIGINT,
+            inserted_rows BIGINT,
+            matched_rows BIGINT,
+            unchanged_rows BIGINT,
             throughput_rows_per_sec DOUBLE,
             skew_ratio DOUBLE,
-            run_status STRING,
+            load_type STRING,
+            run_status STRING, 
             load_timestamp TIMESTAMP,
             notes STRING
         )
@@ -792,7 +1057,6 @@ def write_etl_metrics(
         )
         """
         )
-
 
         # ------------------------------------------------------------------
         # 3. Explicit schema definition avoids schema drift and inference
@@ -807,13 +1071,17 @@ def write_etl_metrics(
             StructField("start_ts", TimestampType(), True),
             StructField("end_ts", TimestampType(), True),
             StructField("duration_secs", IntegerType(), True),
-            StructField("total_rows", LongType(), True),            # BIGINT for scale safety
+            StructField("read_rows", LongType(), True),            # BIGINT for scale safety
             StructField("good_rows", LongType(), True),
             StructField("dirty_rows", LongType(), True),
             StructField("deduplicated_rows", LongType(), True),
             StructField("duplicate_rows", LongType(), True),
+            StructField("inserted_rows", LongType(), True),
+            StructField ("matched_rows", LongType(), True),
+            StructField("unchanged_rows", LongType(), True),
             StructField("throughput_rows_per_sec", DoubleType(), True),
             StructField("skew_ratio", DoubleType(), True),
+            StructField("load_type", StringType(), True),
             StructField("run_status", StringType(), True),
             StructField("notes", StringType(), True),
         ])
@@ -832,13 +1100,17 @@ def write_etl_metrics(
                 start_ts,
                 end_ts,
                 duration_secs,
-                total_rows,
+                read_rows,
                 good_rows,
                 dirty_rows,
                 deduplicated_rows,
                 duplicate_rows,
+                inserted_rows,
+                updated_rows,
+                unchanged_rows,
                 throughput_rows_per_sec,
                 skew_ratio,
+                load_type,
                 run_status,
                 notes
             )],

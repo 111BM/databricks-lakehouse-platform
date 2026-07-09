@@ -19,13 +19,11 @@ fact_table_configs:
       - order_date
       - ship_date
       - ship_mode
-      - ingestion_ts
-      - source_file_path
-      - source_file_name
-      - silver_orders_hash_id
     natural_keys:
       - order_id
-    hash_column: silver_orders_hash_id
+    hash_column: gold_orders_hash_id
+    meta_columns:
+      - silver_ingestion_ts
     z_order_cols:
       - customer_id
       - order_date
@@ -41,70 +39,18 @@ fact_table_configs:
     metrics_table: gold_layer_metrics
     required_columns:
       - order_id
-      - customer_id
       - product_id
       - sales
       - quantity
       - discount
       - profit
-      - ingestion_ts
-      - source_file_path
-      - source_file_name
-      - silver_sales_hash_id
     natural_keys:
       - order_id
       - product_id
-    hash_column: silver_sales_hash_id
+    hash_column: gold_sales_hash_id
+    meta_columns:
+      - silver_ingestion_ts
     z_order_cols:
       - customer_id
       - product_id
 
-# fact_table_configs:
-#   orders:
-#     layer_name: "Gold"
-#     table_type: "fact"
-#     silver_tbl: "superstore_catalog.superstore_silver.orders"
-#     gold_tbl: "superstore_catalog.superstore_gold.facts_orders"
-#     metrics_table: "superstore_catalog.superstore_metrics.gold_layer_metrics"
-#     required_columns:
-#       - "order_id"
-#       - "customer_id"
-#       - "order_date"
-#       - "ship_date"
-#       - "ship_mode"
-#       - "ingestion_ts"
-#       - "source_file_path"
-#       - "source_file_name"
-#       - "silver_orders_hash_id"
-#     natural_keys:
-#       - "order_id"
-#     hash_column: "silver_orders_hash_id"
-#     z_order_cols:
-#       - "customer_id"
-#       - "order_date"
-
-#   sales:
-#     layer_name: "Gold"
-#     table_type: "fact"
-#     silver_tbl: "superstore_catalog.superstore_silver.sales"
-#     gold_tbl: "superstore_catalog.superstore_gold.facts_sales"
-#     metrics_table: "superstore_catalog.superstore_metrics.gold_layer_metrics"
-#     required_columns:
-#       - "order_id"
-#       - "customer_id"
-#       - "product_id"
-#       - "sales"
-#       - "quantity"
-#       - "discount"
-#       - "profit"
-#       - "ingestion_ts"
-#       - "source_file_path"
-#       - "source_file_name"
-#       - "silver_sales_hash_id"
-#     natural_keys:
-#       - "order_id"
-#       - "product_id"
-#     hash_column: "silver_sales_hash_id"
-#     z_order_cols:
-#       - "customer_id"
-#       - "product_id"

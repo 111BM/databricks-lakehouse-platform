@@ -32,13 +32,13 @@ bronze_main:
   metrics_table: "bronze_layer_main_ingestion_metrics"
   layer_name: "Bronze"
   metadata_columns:
-    - ingestion_ts
+    - bronze_ingestion_ts
     - ingestion_date
     - source_file_path
     - source_file_name
     - source_file_size_bytes
     - source_file_modification_time
-    - raw_table_name
+    
 
 # -------------------------------
 # Bronze entities
@@ -52,16 +52,16 @@ bronze_entities:
     layer_name: "Bronze"
     columns: ["customer_id", "customer_name", "segment", "country", "state", "city", "postal_code", "region"]
     business_key: "customer_id"
-    partition_col: "ingestion_date"
+    partition_col: "bronze_ingestion_ts"
     z_order_columns: ["customer_id"]
     metadata_columns:
-      - ingestion_ts
+      - bronze_ingestion_ts
       - ingestion_date
       - source_file_path
       - source_file_name
       - source_file_size_bytes
       - source_file_modification_time
-      - raw_table_name
+      
 
   products:
     table_name: "products"
@@ -71,16 +71,16 @@ bronze_entities:
     layer_name: "Bronze"
     columns: ["product_id", "product_name", "category", "sub_category"]
     business_key: "product_id"
-    partition_col: "ingestion_date"
+    partition_col: "bronze_ingestion_ts"
     z_order_columns: ["product_id"]
     metadata_columns:
-      - ingestion_ts
+      - bronze_ingestion_ts
       - ingestion_date
       - source_file_path
       - source_file_name
       - source_file_size_bytes
       - source_file_modification_time
-      - raw_table_name
+      
 
   orders:
     table_name: "orders"
@@ -90,35 +90,34 @@ bronze_entities:
     layer_name: "Bronze"
     columns: ["order_id", "customer_id", "order_date", "ship_date", "ship_mode"]
     business_key: "order_id"
-    partition_col: "ingestion_date"
+    partition_col: "bronze_ingestion_ts"
     z_order_columns: ["order_id", "customer_id"]
     metadata_columns:
-      - ingestion_ts
+      - bronze_ingestion_ts
       - ingestion_date
       - source_file_path
       - source_file_name
       - source_file_size_bytes
       - source_file_modification_time
-      - raw_table_name
-
+      
   sales:
     table_name: "sales"
     metrics_table: "bronze_layer_entity_metrics"
     source_table: "superstore_raw"
     checkpointLocation: "/Volumes/workspace/default/my_filestore/superstore_metadata/superstore_bronze_metadata/entity_checkpoint/sales/"
     layer_name: "Bronze"
-    columns: ["order_id", "customer_id", "product_id", "sales", "quantity", "discount", "profit"]
-    business_key: ["order_id", "customer_id"]
-    partition_col: "ingestion_date"
-    z_order_columns: ["order_id", "customer_id"]
+    columns: ["order_id", "product_id", "sales", "quantity", "discount", "profit"]
+    business_key: ["order_id", "product_id"]
+    partition_col: "bronze_ingestion_ts"
+    z_order_columns: ["order_id", "product_id"]
     metadata_columns:
-      - ingestion_ts
+      - bronze_ingestion_ts
       - ingestion_date
       - source_file_path
       - source_file_name
       - source_file_size_bytes
       - source_file_modification_time
-      - raw_table_name
+      
 
 # -----------------------------
 # File Paths & Table Names (Configuration per Environment)
