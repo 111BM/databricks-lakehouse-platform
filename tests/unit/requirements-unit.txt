@@ -1,0 +1,14 @@
+# Dependencies for the local/CI unit-test suite (tests/unit/).
+# Target interpreter: Python 3.12 (PySpark does not yet fully support 3.13).
+#
+# Setup:
+#   python3.12 -m venv .venv-tests
+#   ./.venv-tests/bin/python -m pip install -r tests/unit/requirements-unit.txt
+#
+# Then run:
+#   ./.venv-tests/bin/python -m pytest tests/unit/ -v
+
+pyspark==3.5.3        # local Spark session for DataFrame-based tests
+delta-spark==3.2.0    # gold modules import delta.tables.DeltaTable at module load
+pytz                  # superstore_logger imports pytz at module load
+pytest

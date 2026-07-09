@@ -1,23 +1,44 @@
-# Purpose:
-#   Utility module for handling orchestration execution context
-#   in Superstore Medallion Lakehouse pipelines.
-#
-#   Provides standardized functions to:
-#     - Retrieve or generate a global master_run_id for pipeline runs
-#     - Generate a unique layer_run_id for individual ETL layers
-#     - Return both IDs together for logging, metrics, and tracing
-#
-# Key Features:
-#   - Supports both master-orchestrated runs and standalone execution
-#   - Ensures all child orchestrators receive a consistent master_run_id
-#   - Facilitates structured logging and observability
-#   - Modular design separates ID management from logging and ETL logic
-#
-# Imports:
-#   uuid: Used for generating unique identifiers for master and layer runs.
-#   superstore_logger.create_master_run_id: Generates a master pipeline UUID.
-#   superstore_logger.create_run_id_for_layer: Generates a layer-specific UUID.
-# ==============================================================
+"""
+===============================================================
+Module: Superstore Orchestrator Execution Context
+
+Purpose:
+    This module handles the orchestration execution context in the Superstore Medallion Lakehouse pipelines.
+    It provides standardized methods to retrieve or generate a global `master_run_id` for the entire pipeline run,
+    as well as a unique `layer_run_id` for each individual ETL layer. Both IDs are essential for logging, metrics, 
+    and traceability during pipeline execution.
+
+Key Features:
+1. Master and Layer Run ID Handling:
+    - Retrieves or generates a global `master_run_id` for the entire pipeline run.
+    - Generates a unique `layer_run_id` for each individual ETL layer, ensuring that each layer has its own ID.
+    - Facilitates traceability of individual pipeline executions and better observability through logging.
+
+2. Supports Standalone and Orchestrated Runs:
+    - The module can handle both orchestrated pipeline runs (via a master orchestrator) and standalone execution.
+    - If running standalone, it automatically generates the `master_run_id` if not provided, making it versatile for different use cases.
+
+3. Structured Logging and Metrics:
+    - The `master_run_id` and `layer_run_id` are passed together for structured logging, ensuring consistent and traceable log entries.
+    - These IDs are critical for tracking execution across all layers of the pipeline, from the Bronze layer through Gold.
+
+4. Modular Design:
+    - Separates ID management logic from other ETL tasks, enabling cleaner and more maintainable code.
+    - Can be reused across different pipeline scripts and orchestrators, ensuring consistent execution context handling.
+
+5. Traceability and Observability:
+    - The `master_run_id` and `layer_run_id` are included in logs and metrics, providing full traceability across pipeline runs.
+    - Useful for debugging, performance tracking, and monitoring pipeline health.
+
+Imports:
+    uuid: Used for generating unique identifiers for both the `master_run_id` and `layer_run_id`.
+    superstore_logger.create_master_run_id: Generates a unique `master_run_id` for the entire pipeline execution.
+    superstore_logger.create_run_id_for_layer: Generates a unique `layer_run_id` for each pipeline layer.
+
+Usage:
+    The module can be imported and used in Superstore pipeline scripts to ensure proper orchestration execution context:
+===============================================================
+"""
 
 import uuid
 import sys

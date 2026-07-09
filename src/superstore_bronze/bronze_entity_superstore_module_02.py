@@ -1,59 +1,92 @@
-# ==============================================================
-# Module: Bronze Entity Split – Superstore append
-#
-# Author: Senior Data Engineering Team
-# Date: 2026-02-20
-# Version: 1.0.0
-#
-# Purpose:
-#     Incrementally splits Bronze raw data into multiple entity tables
-#     using append logic. Handles new and updated records while maintaining
-#     idempotency and optimized partitioning.
-#
-# Key Features:
-# 1. Incremental append Logic:
-#     - Inserts new rows and updates existing rows based on configured business keys.
-#     - Ensures no duplicate data across repeated runs.
-#
-# 2. Partitioning & Optional Z-Ordering:
-#     - Entity tables partitioned by `ingestion_date`.
-#     - Optional Z-Order for selective query acceleration on key lookup columns.
-#
-# 3. Observability:
-#     - Structured JSON logging with `run_id`, timestamps, table names, and row counts.
-#     - Logs module-level technical details; orchestrator logs high-level pipeline progress.
-#
-# 4. Error Handling & Resilience:
-#     - Safe to rerun without affecting existing data.
-#     - Logs warnings for Z-Order failures or table creation issues without stopping execution.
-#
-# 5. Configuration-Driven:
-#     - Entity table definitions, business keys, column selections, and Z-Order columns
-#       are centralized for consistent and repeatable execution.
-#
-# Best Practices / Notes:
-# - Avoid `.count()` on massive tables; use async metrics where possible.
-# - Optimize and Z-Order large entity tables during off-peak hours.
-# - Ensure partition columns exist and are consistent across pipelines.
-# - Module is designed for serverless Databricks compute with minimal resource usage.
-# ==============================================================
+"""
+ ==============================================================
+Module: Bronze Entity Split – Superstore append
 
+Purpose:
+    Incrementally splits Bronze raw data into multiple entity tables
+    using append logic. Handles new and updated records while maintaining
+    idempotency and optimized partitioning.
+
+Key Features:
+1. Incremental append Logic:
+    - Inserts new rows and updates existing rows based on configured business keys.
+    - Ensures no duplicate data across repeated runs.
+
+2. Partitioning & Optional Z-Ordering:
+    - Entity tables partitioned by `ingestion_date`.
+    - Optional Z-Order for selective query acceleration on key lookup columns.
+
+3. Observability:
+    - Structured JSON logging with `run_id`, timestamps, table names, and row counts.
+    - Logs module-level technical details; orchestrator logs high-level pipeline progress.
+
+4. Error Handling & Resilience:
+    - Safe to rerun without affecting existing data.
+    - Loghttps://dbc-081a6a55-88cd.cloud.databricks.com/browse/folders/2666713180999236?o=189811461030739&contextId=folder%3A2666713180999206$0s warnings for Z-Order failures or table creation issues without stopping execution.
+
+5. Configuration-Driven:
+    - Entity table definitions, business keys, column selections, and Z-Order columns
+      are centralized for consistent and repeatable execution.
+
+Best Practices / Notes:
+- Avoid `.count()` on massive tables; use async metrics where possible.
+- Optimize and Z-Order large entity tables during off-peak hours.
+- Ensure partition columns exist and are consistent across pipelines.
+- Module is designed for serverless Databricks compute with minimal resource usage.
+==============================================================
+"""
+
+# -----------------------------
+# System utilities
+# Used for path handling and environment setup (e.g., adding shared libraries)
+# -----------------------------
 import sys
-sys.path.append("/Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities")
 
+# Extend Python path to include shared utility modules in Databricks workspace
+sys.path.append(
+    "/Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities"
+)
+
+# -----------------------------
+# YAML configuration loader
+# Used for reading pipeline configuration files (Bronze metadata, entity configs, etc.)
+# -----------------------------
 import yaml
 
-# Load YAML config
+# Load Bronze configuration from YAML file
 with open(
     "/Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/configs/superstore_bronze_config/superstore_bronze_config.yaml",
     "r"
 ) as f:
     bronze_config = yaml.safe_load(f)
 
+# -----------------------------
+# Custom logging framework
+# Used for pipeline observability, auditing, and centralized logging
+# -----------------------------
 from superstore_logger import get_superstore_logger, log_event
+
+# -----------------------------
+# Platform constants
+# Defines pipeline layers (Bronze, Silver, Gold)
+# -----------------------------
 from superstore_platform_constants import BRONZE_LAYER
-# from superstore_bronze_config import bronze_entities
-from superstore_platform_config import get_catalog, get_bronze_schema, get_metrics_schema, table
+
+# -----------------------------
+# Platform configuration utilities
+# Used for resolving catalog, schemas, and table naming conventions
+# -----------------------------
+from superstore_platform_config import (
+    get_catalog,
+    get_bronze_schema,
+    get_metrics_schema,
+    table
+)
+
+# -----------------------------
+# PySpark SQL types
+# Used for defining schemas in DataFrame transformations and table creation
+# -----------------------------
 from pyspark.sql.types import (
     StructType,
     StructField,
@@ -62,10 +95,24 @@ from pyspark.sql.types import (
     LongType,
     DoubleType
 )
+
+# -----------------------------
+# PySpark DataFrame API
+# Core abstraction for distributed data processing
+# -----------------------------
 from pyspark.sql import DataFrame
+
+# -----------------------------
+# Delta Lake utilities
+# Used for ACID transactions, MERGE operations, and table management
+# -----------------------------
 from delta.tables import DeltaTable
-from pyspark.sql.functions import current_timestamp,sum, avg, min, max
-import time       # used for ETL timing
+
+# -----------------------------
+# PySpark functions (aggregation + timestamp utilities)
+# Used for transformations and metric calculations
+# -----------------------------
+from pyspark.sql.functions import current_timestamp, sum, avg, min, max
 
 # -----------------------------
 # Logger Setup for Bronze Ingestion
@@ -77,6 +124,7 @@ def collect_entity_metrics(
     spark,
     entity_df,
     metrics_table: str,
+    load_type: str,
     master_run_id: str,
     layer_run_id: str,
     layer_name: str,
@@ -85,9 +133,9 @@ def collect_entity_metrics(
     entity_name: str,
     start_ts: str,
     end_ts: str,
-    duration_secs: int,
-    run_status: str,
-    notes: str = ""
+    duration_secs: int
+    # run_status: str,
+    # notes: str,
 ):
     """
     Collects metrics specific to each entity processed in the Bronze layer.
@@ -120,6 +168,29 @@ def collect_entity_metrics(
     )
 
     # -----------------------------
+    # Initialize defaults
+    # -----------------------------
+    rows_read = 0
+    rows_written = 0
+    files_processed = 0
+
+    total_file_size_bytes = 0
+    avg_file_size_bytes = 0
+    max_file_size_bytes = 0
+
+    file_skew_ratio = 0.0
+    throughput_rows_per_sec = 0.0
+    
+    bronze_ingestion_ts_min = None
+    bronze_ingestion_ts_max = None
+    earliest_file_mod_time = None
+    latest_file_mod_time = None
+    
+    notes = None
+    load_type = load_type or None
+
+
+    # -----------------------------
     # Safe check if df has any rows
     # -----------------------------
     try:
@@ -136,60 +207,87 @@ def collect_entity_metrics(
         raise
 
     # -----------------------------
-    # Initialize defaults
+    # CASE 1: No data
     # -----------------------------
-    rows_read = 0
-    rows_written = 0
-    files_processed = 0
-    total_file_size_bytes = 0
-    max_file_size_bytes = 0
-    file_skew_ratio = 0.0
-    avg_file_size_bytes = 0
-    ingestion_ts_min = None
-    ingestion_ts_max = None
-    earliest_file_mod_time = None
-    latest_file_mod_time = None
-    throughput_rows_per_sec = 0.0
-    notes = "No rows/files processed"
+    if not has_rows:
+        load_type = "NO_DATA"
+        run_status = "SKIPPED"
+        notes = notes or f"No new files/rows for entity {entity_name}"
 
     # -----------------------------
-    # Calculate entity metrics if rows exist
+    # CASE 2: Data present
     # -----------------------------
-    if has_rows:
+    else:
         try:
-            # Get a file level dataframe
+            # -----------------------------
+            # Build file-level dataset (1 row per file)
+            # Removes duplicate file entries to avoid double counting
+            # -----------------------------
             file_df = entity_df.select(
                 "source_file_name",
                 "source_file_size_bytes",
                 "source_file_modification_time",
-                "ingestion_ts"
+                "bronze_ingestion_ts"
             ).dropDuplicates(["source_file_name"])
 
+            # -----------------------------
+            # Aggregate file-level metrics
+            # Captures volume, size distribution, and ingestion time range
+            # -----------------------------
             entity_file_metrics = file_df.agg(
-                sum("source_file_size_bytes").alias("total_file_size_bytes"),
-                max("source_file_size_bytes").alias("max_file_size_bytes"),
-                avg("source_file_size_bytes").alias("avg_file_size_bytes"),
-                min("source_file_modification_time").alias("earliest_file_mod_time"),
-                max("source_file_modification_time").alias("latest_file_mod_time"),
-                min("ingestion_ts").alias("ingestion_ts_min"),
-                max("ingestion_ts").alias("ingestion_ts_max"),
+                sum("source_file_size_bytes").alias("total_file_size_bytes"),   # Total size of all processed files
+                max("source_file_size_bytes").alias("max_file_size_bytes"),     # Largest file size
+                avg("source_file_size_bytes").alias("avg_file_size_bytes"),     # Average file size
+                min("source_file_modification_time").alias("earliest_file_mod_time"),  # Oldest file timestamp
+                max("source_file_modification_time").alias("latest_file_mod_time"),    # Latest file timestamp
+                min("bronze_ingestion_ts").alias("bronze_ingestion_ts_min"),    # Earliest ingestion timestamp
+                max("bronze_ingestion_ts").alias("bronze_ingestion_ts_max"),    # Latest ingestion timestamp
             ).collect()[0]
 
-            rows_read = entity_df.count()
-            rows_written = rows_read
-            files_processed = entity_df.select("source_file_name").distinct().count()
+            # -----------------------------
+            # Row-level metrics
+            # -----------------------------
+            rows_read = entity_df.count()          # Total rows read from source
+            rows_written = rows_read               # Bronze is append-only → rows written = rows read
+            files_processed = entity_df.select("source_file_name").distinct().count()  # Unique files processed
 
+            # -----------------------------
+            # Extract aggregated file metrics
+            # -----------------------------
             total_file_size_bytes = entity_file_metrics["total_file_size_bytes"]
             max_file_size_bytes = entity_file_metrics["max_file_size_bytes"]
             avg_file_size_bytes = entity_file_metrics["avg_file_size_bytes"]
-            file_skew_ratio = round(max_file_size_bytes / (avg_file_size_bytes or 1),2)
-            ingestion_ts_min = entity_file_metrics["ingestion_ts_min"]
-            ingestion_ts_max = entity_file_metrics["ingestion_ts_max"]
+
+            # -----------------------------
+            # File skew detection
+            # Measures imbalance in file sizes (large skew may impact performance)
+            # -----------------------------
+            file_skew_ratio = round(max_file_size_bytes / (avg_file_size_bytes or 1), 2)
+
+            # -----------------------------
+            # Extract ingestion and file time ranges
+            # -----------------------------
+            bronze_ingestion_ts_min = entity_file_metrics["bronze_ingestion_ts_min"]
+            bronze_ingestion_ts_max = entity_file_metrics["bronze_ingestion_ts_max"]
             earliest_file_mod_time = entity_file_metrics["earliest_file_mod_time"]
             latest_file_mod_time = entity_file_metrics["latest_file_mod_time"]
 
-            throughput_rows_per_sec = round(rows_read / duration_secs,2) if duration_secs > 0 else 0
-            notes = ""  # Clear default note if rows exist
+            # -----------------------------
+            # Throughput calculation
+            # Rows processed per second (pipeline performance metric)
+            # -----------------------------
+            throughput_rows_per_sec = round(rows_read / duration_secs, 2) if duration_secs > 0 else 0
+
+            # -----------------------------
+            # Status + Execution Mode Notes
+            # -----------------------------
+            run_status = "SUCCESS"
+
+            # Set human-readable notes based on execution mode
+            if load_type == "INITIAL_LOAD":
+                notes = f"Initial load completed for {entity_name}"
+            elif load_type == "INCREMENTAL":
+                notes = f"Incremental append completed for {entity_name}"
 
         except Exception as e:
             log_event(
@@ -225,12 +323,13 @@ def collect_entity_metrics(
                     total_file_size_bytes BIGINT,
                     avg_file_size_bytes BIGINT,
                     max_file_size_bytes BIGINT,
-                    file_skew_ratio DOUBLE,
-                    ingestion_ts_min TIMESTAMP,
-                    ingestion_ts_max TIMESTAMP,
+                    bronze_ingestion_ts_min TIMESTAMP,
+                    bronze_ingestion_ts_max TIMESTAMP,
                     earliest_file_mod_time TIMESTAMP,
                     latest_file_mod_time TIMESTAMP,
                     throughput_rows_per_sec DOUBLE,
+                    file_skew_ratio DOUBLE,
+                    load_type STRING,
                     run_status STRING,
                     load_timestamp TIMESTAMP,
                     notes STRING
@@ -274,12 +373,13 @@ def collect_entity_metrics(
                 StructField("total_file_size_bytes", LongType(), True),
                 StructField("avg_file_size_bytes", LongType(), True),
                 StructField("max_file_size_bytes", LongType(), True),
-                StructField("file_skew_ratio", DoubleType(), True),
-                StructField("ingestion_ts_min", TimestampType(), True),
-                StructField("ingestion_ts_max", TimestampType(), True),
+                StructField("bronze_ingestion_ts_min", TimestampType(), True),
+                StructField("bronze_ingestion_ts_max", TimestampType(), True),
                 StructField("earliest_file_mod_time", TimestampType(), True),
                 StructField("latest_file_mod_time", TimestampType(), True),
                 StructField("throughput_rows_per_sec", DoubleType(), True),
+                StructField("file_skew_ratio", DoubleType(), True),
+                StructField("load_type", StringType(), True),
                 StructField("run_status", StringType(), True),
                 StructField("notes", StringType(), True),
             ]
@@ -303,12 +403,13 @@ def collect_entity_metrics(
                     total_file_size_bytes,
                     avg_file_size_bytes,
                     max_file_size_bytes,
-                    file_skew_ratio,
-                    ingestion_ts_min,
-                    ingestion_ts_max,
+                    bronze_ingestion_ts_min,
+                    bronze_ingestion_ts_max,
                     earliest_file_mod_time,
                     latest_file_mod_time,
                     throughput_rows_per_sec,
+                    file_skew_ratio,
+                    load_type,
                     run_status,
                     notes,
                 )
@@ -353,13 +454,33 @@ def collect_entity_metrics(
         raise
 
 def get_last_processed_ts(spark, table_name):
+    """
+    Fetches the latest processed ingestion timestamp from a Bronze Delta table.
+    Used for incremental processing to avoid reprocessing already ingested data.
+    """
+
+    # -----------------------------
+    # Check if target table exists in catalog
+    # Prevents runtime errors on first run (initial load scenario)
+    # -----------------------------
     if spark.catalog.tableExists(table_name):
+
+        # -----------------------------
+        # Extract maximum ingestion timestamp
+        # This represents the last successfully processed record time
+        # -----------------------------
         max_ts = (
             spark.table(table_name)
-            .agg({"ingestion_ts": "max"})
+            .agg({"bronze_ingestion_ts": "max"})
             .collect()[0][0]
         )
+
         return max_ts
+
+    # -----------------------------
+    # Table does not exist
+    # Indicates initial pipeline run (no historical watermark available)
+    # -----------------------------
     else:
         return None
 
@@ -407,7 +528,7 @@ def bronze_entity_incremental_append(
     # Incremental filter
     last_ts = get_last_processed_ts(spark, table_name)
     if last_ts:
-        df_entity = raw_df.filter(raw_df.ingestion_ts > last_ts)
+        df_entity = raw_df.filter(raw_df.bronze_ingestion_ts > last_ts)
     else:
         df_entity = raw_df
 
@@ -426,6 +547,25 @@ def bronze_entity_incremental_append(
     # Select relevant columns
     entity_df = df_entity.select(*all_columns)
 
+    # -----------------------------
+    # Detect target table state BEFORE write
+    # -----------------------------
+    target_exists = spark.catalog.tableExists(table_name)
+    is_initial_load = (
+        not target_exists
+        or spark.table(table_name).limit(1).count() == 0
+    )
+
+    # -----------------------------
+    # Execution mode decision (BEFORE APPEND)
+    # -----------------------------
+    if is_initial_load:
+        load_type= "INITIAL_LOAD"
+    elif rows_count == 0:
+        load_type= "NO_DATA"
+    else:
+        load_type= "INCREMENTAL"
+
     # Append to Bronze Delta table
     entity_df.write.format("delta") \
         .mode("append") \
@@ -442,43 +582,11 @@ def bronze_entity_incremental_append(
         layer=BRONZE_LAYER
     )
 
-    return entity_df  # return DF for metrics computation
-
-# def optimize_zorder_bronze_tables(spark, bronze_entities: dict, table_name: str, master_run_id: str, layer_run_id: str):
-#     """
-#     Optimizes Delta tables and optionally Z-Orders by high-cardinality columns.
-#     """
-#     log_event(
-#         logger_bronze_entity,
-#         "INFO",
-#         "Starting Bronze entity tables optimize and z-order ...",
-#         master_run_id=master_run_id,
-#         layer_run_id=layer_run_id,
-#         layer=BRONZE_LAYER
-#     )
-#     for entity_name, entity_conf in bronze_entities.items():
-#         # table_name = entity_conf["table_name"]
-#         table_name= 
-#         z_order_cols = entity_conf.get("z_order_columns", [])
-
-#         try:
-#             spark.sql(f"OPTIMIZE {table_name}")
-#             log_event(logger_bronze_entity, "INFO", f"Delta table optimized", 
-#                     table=table_name, master_run_id=master_run_id, layer_run_id=layer_run_id, layer=BRONZE_LAYER)
-#         except Exception as e:
-#             log_event(logger_bronze_entity, "WARNING", f"Optimize failed for {table_name}: {e}",
-#                     table=table_name, master_run_id=master_run_id, layer_run_id=layer_run_id, layer=BRONZE_LAYER)
-
-#         if z_order_cols:
-#             try:
-#                 z_order_cols_str = ",".join(z_order_cols)
-#                 spark.sql(f"OPTIMIZE {table_name} ZORDER BY ({z_order_cols_str})")
-#                 log_event(logger_bronze_entity, "INFO", f"Entity table Z-ordered by {z_order_cols_str}", 
-#                         table=table_name, master_run_id=master_run_id, layer_run_id=layer_run_id, layer=BRONZE_LAYER)
-#             except Exception as e:
-#                 log_event(logger_bronze_entity, "WARNING", f"Z-Order failed for {table_name}: {e}",
-#                         table=table_name, master_run_id=master_run_id, layer_run_id=layer_run_id,layer=BRONZE_LAYER)
-                
+    return {
+        "entity_df": entity_df,
+        "load_type" : load_type
+    }
+  
 
 def optimize_zorder_bronze_tables(
     spark,
@@ -581,4 +689,3 @@ def optimize_zorder_bronze_tables(
                 layer_run_id=layer_run_id,
                 layer=BRONZE_LAYER
             )
-                

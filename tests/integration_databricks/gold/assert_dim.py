@@ -1,0 +1,80 @@
+# Databricks notebook source
+# MAGIC %md
+# MAGIC # Integration Test — Gold DIMENSION assertions
+# MAGIC
+# MAGIC Validates the SCD2 dimension framework output in the isolated
+# MAGIC `integration_test_gold` schema: dimensions exist and are non-empty,
+# MAGIC exactly one current row per business key, and no overlapping validity
+# MAGIC ranges. Fact / referential-integrity checks live in `assert_fact`.
+
+# COMMAND ----------
+
+import sys
+sys.path.append("/Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/tests/integration_databricks/_helpers")
+from assertion_helpers import check, count, count_or_zero, columns, table_exists, finalize, CATALOG, ENV, BRONZE, SILVER, GOLD, QUARANTINE, AUDIT, METRICS, SEED_ROW_COUNT, BUSINESS_KEYS
+
+from pyspark.sql.functions import col, lag
+from pyspark.sql.window import Window
+
+DIMS = {"dim_customers": "customer_id", "dim_products": "product_id"}
+
+# COMMAND ----------
+
+# DBTITLE 1,Dimensions exist and are non-empty
+for dim in DIMS:
+    fqn = f"{GOLD}.{dim}"
+    if check(f"{fqn} exists", table_exists(fqn)):
+        c = count(fqn)
+        check(f"{dim} is non-empty", bool(c), f"rows={c}")
+
+# COMMAND ----------
+
+# DBTITLE 1,SCD2 — exactly one current row per business key
+for dim, key in DIMS.items():
+    fqn = f"{GOLD}.{dim}"
+    if not table_exists(fqn):
+        continue
+    violations = (
+        spark.table(fqn)
+        .filter(col("is_current") == True)
+        .groupBy(key).count()
+        .filter(col("count") != 1)
+        .count()
+    )
+    check(f"{dim}: exactly one current row per {key}", violations == 0,
+          f"keys with != 1 current row: {violations}")
+
+# COMMAND ----------
+
+# DBTITLE 1,SCD2 — no overlapping effective ranges per key
+for dim, key in DIMS.items():
+    fqn = f"{GOLD}.{dim}"
+    if not table_exists(fqn):
+        continue
+    cols = columns(fqn)
+    if not {"effective_from", "effective_to"}.issubset(cols):
+        check(f"{dim} has effective_from/effective_to", False, "columns missing")
+        continue
+    w = Window.partitionBy(key).orderBy("effective_from")
+    overlaps = (
+        spark.table(fqn)
+        .withColumn("prev_to", lag("effective_to").over(w))
+        .filter(col("prev_to").isNotNull() & (col("effective_from") <= col("prev_to")))
+        .count()
+    )
+    check(f"{dim}: no overlapping validity ranges", overlaps == 0, f"overlaps={overlaps}")
+
+# COMMAND ----------
+
+# DBTITLE 1,Gold dimension metrics recorded for this run
+m = f"{METRICS}.gold_layer_metrics"
+if table_exists(m):
+    mdf = spark.table(m)
+    for dim in DIMS:
+        got = mdf.filter(col("target_table").endswith(f"{ENV}_gold.{dim}")).count()
+        check(f"gold metrics recorded for {dim}", got >= 1, f"rows={got}")
+
+# COMMAND ----------
+
+finalize("GOLD_DIM")
+dbutils.notebook.exit("GOLD_DIM_ASSERTIONS_PASSED")

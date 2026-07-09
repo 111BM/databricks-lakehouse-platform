@@ -7,6 +7,7 @@ bundle:
 
 include:
   - resources/supertsore_lakehouse_job.job.yml
+  - resources/integration_test_job.job.yml
 
 # Variable declarations. These variables are assigned in the dev/prod targets below.
 variables:
@@ -21,6 +22,20 @@ variables:
   SUPERSTORE_PIPELINE_VERSION:
     description: Version of the Superstore pipeline
 
+  # Backfill variable:
+  backfill_mode:
+    description: Backfill mode (incremental | date_range | full_refresh)
+    default: "incremental"
+  start_date:
+    description: Start date for backfill (YYYY-MM-DD)
+    default: ""
+  end_date:
+    description: End date for backfill (YYYY-MM-DD, defaults to today)
+    default: ""
+  dry_run:
+    description: Dry-run mode (true | false)
+    default: "false"
+
 targets:
   dev:
     mode: development
@@ -30,14 +45,18 @@ targets:
       host: https://dbc-081a6a55-88cd.cloud.databricks.com
       # root_path: /Workspace/Users/bireshmoktan@gmail.com/.bundle/${bundle.name}/${bundle.target}
       # root_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_dev_environment/.bundle/${bundle.name}/${bundle.target}
-      # root_path: ~/superstore_dev_environment/.bundle/${bundle.name}/${bundle.target}
-      root_path: ~/Workspace/Repos/superstore_dev_environment/.bundle/${bundle.name}/${bundle.target}
+      root_path: ~/superstore_dev_environment/.bundle/${bundle.name}/${bundle.target}
+      # root_path: ~/Workspace/Repos/superstore_dev_environment/.bundle/${bundle.name}/${bundle.target}
       
     presets:
       source_linked_deployment: false   
     variables:
       catalog: superstore_catalog
       schema: dev
+      backfill_mode: "incremental"  # Safe default
+      start_date: ""
+      end_date: ""
+      dry_run: "false"  # Changed from "true" - normal runs should process data
       SUPERSTORE_ENV: dev
       SUPERSTORE_PIPELINE_NAME: superstore_etl_pipeline_dev
       SUPERSTORE_PIPELINE_VERSION: "1.0"
@@ -54,6 +73,10 @@ targets:
     variables:
       catalog: superstore_catalog
       schema: qa
+      backfill_mode: "incremental"
+      start_date: ""
+      end_date: ""
+      dry_run: "false"
       SUPERSTORE_ENV: qa
       SUPERSTORE_PIPELINE_NAME: superstore_etl_pipeline_qa
       SUPERSTORE_PIPELINE_VERSION: "1.0"
@@ -68,10 +91,13 @@ targets:
     variables:
       catalog: superstore_catalog
       schema: prod
+      backfill_mode: "incremental"
+      start_date: ""
+      end_date: ""
+      dry_run: "false"
       SUPERSTORE_ENV: prod
       SUPERSTORE_PIPELINE_NAME: superstore_etl_pipeline_prod
       SUPERSTORE_PIPELINE_VERSION: "1.0"
     permissions:
       - user_name: bireshmoktan@gmail.com
         level: CAN_MANAGE
-

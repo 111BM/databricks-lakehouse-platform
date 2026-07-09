@@ -1,24 +1,78 @@
-# -----------------------------
-# ETL Pipeline: Silver to Gold Table Transformation
-# -----------------------------
-# This pipeline processes data from a Silver Delta table to a Gold Delta table, including:
-# 1. Reading and validating the Silver table for required columns.
-# 2. Preparing data with necessary transformations (e.g., adding audit timestamps).
-# 3. Ensuring the Gold table exists before performing an idempotent merge.
-# 4. Merging data from Silver to Gold using Delta Lake's merge feature, ensuring no duplication.
-# 5. Collecting metrics for pipeline observability (e.g., rows inserted, updated).
-# 6. Optimizing Gold table performance using Z-Ordering and cleaning up old data with VACUUM.
-#
-# This solution is designed for production-scale data processing with logging, error handling,
-# and performance optimization in mind.
-# -----------------------------
+"""
+==============================================================
+Module: Silver to Gold-Facts ETL Pipeline with SCD2, Merge Operations & Performance Optimization
 
-import logging  # Standard Python logging module for structured logging
-from uuid import uuid4  # Generates a unique identifier for tracking pipeline runs
-from pyspark.sql import SparkSession  # Core SparkSession for interacting with Spark
-from pyspark.sql.functions import col, current_timestamp, max as spark_max, lit, spark_partition_id
-  # Helper functions
-from delta.tables import DeltaTable  # Delta Lake API for interacting with Delta tables
+Purpose:
+    This module orchestrates the ETL process to move data from Silver to Gold tables in a Databricks Delta Lake environment. 
+    The pipeline performs the following operations:
+    - Fetches incremental data from Silver, ensuring that only new records are processed.
+    - Prepares data for Slowly Changing Dimension Type 2 (SCD2) processing, including adding `effective_from`, `effective_to`, 
+      and `is_current` fields to track historical changes.
+    - Uses idempotent merge operations to safely insert or update records in the Gold table, ensuring data integrity.
+    - Collects detailed metrics on the pipeline's performance, including the number of rows processed, inserted, updated, and deleted.
+    - Optimizes the Gold table using Z-Ordering and performs VACUUM operations to maintain storage efficiency and query performance.
+
+Key Features:
+1. Incremental Data Ingestion:
+    - Loads only new or updated records from the Silver table based on `silver_ingestion_ts`.
+    - Ensures that the Gold table is updated without reprocessing old records.
+
+2. SCD2 (Slowly Changing Dimension Type 2) Processing:
+    - Tracks historical changes in records by adding `effective_from` and `effective_to` timestamps.
+    - Identifies current records with the `is_current` flag to allow for incremental and historical analysis.
+
+3. Merge Operations:
+    - Idempotent Delta `MERGE` operations to update existing records or insert new records in the Gold table.
+    - Ensures that updates only occur when a hash of the data has changed, avoiding unnecessary duplication.
+
+4. Metrics Collection and Monitoring:
+    - Tracks pipeline metrics such as rows read, inserted, updated, unchanged, and soft-deleted.
+    - Computes throughput and skew ratios for better observability of pipeline performance.
+
+5. Gold Table Optimization:
+    - Z-Orders the Gold table based on key columns to improve query performance and partition pruning.
+    - Performs a VACUUM operation to clean up old data, retaining the specified number of hours of data for safety.
+
+6. Serverless Compatibility & Performance:
+    - Fully DataFrame-based pipeline optimized for Databricks serverless clusters.
+    - Uses dynamic partitioning and bucketing strategies to handle large datasets efficiently.
+
+Best Practices / Notes:
+- Ensure business keys and hash columns are properly configured for correct merge operations and deduplication.
+- The `effective_from` and `effective_to` columns in the Gold table must be carefully managed to maintain data history.
+- Z-Ordering is essential for efficient querying, particularly after large inserts or updates in the Gold table.
+- The pipeline is designed to handle incremental loads, but if necessary, full loads can be performed when required.
+- The metrics collection helps monitor pipeline performance and troubleshoot issues in production environments.
+- Ensure that schema evolution is handled carefully, especially when adding new fields or modifying existing ones.
+
+==============================================================
+"""
+# -------------------------------
+# Core Python + Utility Imports
+# -------------------------------
+# Standard libraries for logging, UUID generation, Spark session handling, and system operations
+import logging  # Python logging framework for structured logs
+from uuid import uuid4  # Generates unique identifiers for pipeline run tracking
+import sys  # Enables path manipulation for shared code imports
+
+# PySpark core session and transformation functions
+from pyspark.sql import SparkSession  # Entry point for Spark execution
+from pyspark.sql.functions import (
+    col,
+    current_timestamp,
+    max as spark_max,
+    lit,
+    spark_partition_id,
+    coalesce,
+    concat_ws,
+    sha2,
+    to_date  # For deriving ingestion_date in backfill mode
+)
+
+# Delta Lake support for ACID operations (MERGE / UPDATE / DELETE)
+from delta.tables import DeltaTable
+
+# Spark SQL data types used for schema definitions in metrics and validation tables
 from pyspark.sql.types import (
     StructType,
     StructField,
@@ -28,121 +82,229 @@ from pyspark.sql.types import (
     IntegerType,
     DoubleType
 )
-import sys
 
+
+# -------------------------------
+# Shared Utilities Path
+# -------------------------------
+# Adds reusable platform utilities (logging, config, and orchestration helpers)
 sys.path.append(
     "/Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities"
 )
+
+
+# -------------------------------
+# Core Framework Imports
+# -------------------------------
+# Logging and event tracking utilities for observability
 from superstore_logger import get_superstore_logger, log_event
+
+# Platform constants (ensures consistent layer naming and governance rules)
 from superstore_platform_constants import GOLD_LAYER
+from superstore_backfill_utils import get_incremental_with_backfill  # incremental and backfill 
 
 
-# -----------------------------
-# log_event Setup for Bronze Ingestion
-# -----------------------------
-# Initialize log_event to capture events in the Bronze ingestion pipeline
+# -------------------------------
+# Logger Initialization (Gold Facts Framework)
+# -------------------------------
+# Creates a dedicated logger for Gold facts layer processing
+# Used for tracking MERGE, SCD2, and metrics-related events
 logger_gold_facts = get_superstore_logger("superstore_gold_facts_framework")
+
+# def get_incremental_silver_for_facts(
+#     spark,
+#     silver_table: str,
+#     gold_table: str,
+#     master_run_id: str,
+#     layer_run_id: str,
+#     layer: str,
+#     ingestion_col: str = "silver_ingestion_ts",
+# ):
+#     """
+#     Returns only new Bronze rows not yet ingested into Silver.
+#     Optimized for serverless / partitioned Bronze tables.
+#     """
+
+#     # -----------------------------
+#     # Validate Silver table exists
+#     # -----------------------------
+#     if not spark.catalog.tableExists(silver_table):
+#         log_event(
+#             logger_gold_facts,
+#             "WARNING",
+#             f"Silver table '{silver_table}' does not exist. Skipping fact processing.",
+#             master_run_id=master_run_id,
+#             layer_run_id=layer_run_id,
+#             layer=GOLD_LAYER,
+#         )
+
+#         return spark.createDataFrame([], StructType([]))
+
+#     # -----------------------------
+#     # Start logging
+#     # -----------------------------
+#     log_event(
+#         logger_gold_facts,
+#         "INFO",
+#         f"Fetching incremental rows from silver table '{silver_table}' for Silver table '{silver_table}'",
+#         master_run_id=master_run_id,
+#         layer_run_id=layer_run_id,
+#         layer=GOLD_LAYER,
+#         ingestion_col=ingestion_col,
+#     )
+
+#     # -----------------------------
+#     # Get max ingestion from Gold
+#     # -----------------------------
+#     max_ingestion_ts = None
+#     if spark.catalog.tableExists(gold_table):
+#         max_ingestion_ts_row = spark.table(gold_table).agg(spark_max(ingestion_col).alias("max_ingest_ts")).first()
+#         max_ingestion_ts = max_ingestion_ts_row["max_ingest_ts"]
+#         log_event(
+#             logger_gold_facts,
+#             "INFO",
+#             f"Max ingestion timestamp found in gold table '{gold_table}': {max_ingestion_ts}",
+#             master_run_id=master_run_id,
+#             layer_run_id=layer_run_id,
+#             layer=GOLD_LAYER,
+#         )
+
+#     # Push filter down to silver partitions
+#     silver_df = spark.table(silver_table)
+#     if max_ingestion_ts:
+#         incremental_df = silver_df.filter(col(ingestion_col) > max_ingestion_ts)
+#     else:
+#         incremental_df = silver_df
+#         log_event(
+#             logger_gold_facts,
+#             "INFO",
+#             f"Gold table '{gold_table}' does not exist. Returning full silver table.",
+#             master_run_id=master_run_id,
+#             layer_run_id=layer_run_id,
+#             layer=GOLD_LAYER,
+#         )
+#     row_count = incremental_df.count()
+#     log_event(
+#         logger_gold_facts,
+#         "INFO",
+#         f"Incremental silver rows to process: {row_count}",
+#         master_run_id=master_run_id,
+#         layer_run_id=layer_run_id,
+#         layer=GOLD_LAYER,
+#     )
+
+#     return incremental_df
 
 def get_incremental_silver_for_facts(
     spark, 
     silver_table: str, 
     gold_table: str, 
+    backfill_config: dict,
     master_run_id: str, 
     layer_run_id: str, 
     layer: str, 
-    ingestion_col: str = "ingestion_ts"
+    ingestion_col: str = "silver_ingestion_ts",
+    date_partition_col: str = "ingestion_date"
 ):
     """
-    Returns only new Bronze rows not yet ingested into Silver.
-    Optimized for serverless / partitioned Bronze tables.
+    Returns only new silver rows not yet ingested into gold fact table.
+    Enhanced with backfill support - handles incremental, date_range, and full_refresh modes.
+    
+    Modes:
+    - incremental: Standard watermark-based processing (default)
+    - date_range: Replay specific date range
+    - full_refresh: Reprocess all data
+    
+    Key Fix for Fact Tables:
+    - Fact tables don't have ingestion_date column (unlike dimensions)
+    - They only have bronze_ingestion_ts and silver_ingestion_ts
+    - This function derives ingestion_date from bronze_ingestion_ts for date_range backfill
     """
-
-    # -----------------------------
-    # Validate Silver table exists
-    # -----------------------------
-    if not spark.catalog.tableExists(silver_table):
-
-        log_event(
-            logger_gold_facts,
-            "WARNING",
-            f"Silver table '{silver_table}' does not exist. Skipping fact processing.",
-            master_run_id=master_run_id,
-            layer_run_id=layer_run_id,
-            layer=GOLD_LAYER
-        )
-
-        return spark.createDataFrame([], StructType([]))
-
-
-    # -----------------------------
-    # Start logging
-    # -----------------------------
+    
     log_event(
         logger_gold_facts,
         "INFO",
-        f"Fetching incremental rows from silver table '{silver_table}' for Silver table '{silver_table}'",
-        master_run_id=master_run_id,
-        layer_run_id=layer_run_id,
-        layer=GOLD_LAYER,
-        ingestion_col=ingestion_col
-    )
-
-    # -----------------------------
-    # Get max ingestion from Gold
-    # -----------------------------
-    max_ingestion_ts = None
-    if spark.catalog.tableExists(gold_table):
-        max_ingestion_ts_row = (
-            spark.table(gold_table)
-            .agg(spark_max(ingestion_col).alias("max_ingest_ts"))
-            .first()
-        )
-        max_ingestion_ts = max_ingestion_ts_row["max_ingest_ts"]
-        log_event(
-            logger_gold_facts,
-            "INFO",
-            f"Max ingestion timestamp found in gold table '{gold_table}': {max_ingestion_ts}",
-            master_run_id=master_run_id,
-            layer_run_id=layer_run_id,
-            layer=GOLD_LAYER
-        )
-
-    # Push filter down to silver partitions
-    silver_df = spark.table(silver_table)
-    if max_ingestion_ts:
-        incremental_df = silver_df.filter(col(ingestion_col) > max_ingestion_ts)
-    else:
-        incremental_df = silver_df
-        log_event(
-            logger_gold_facts,
-            "INFO",
-            f"Gold table '{gold_table}' does not exist. Returning full silver table.",
-            master_run_id=master_run_id,
-            layer_run_id=layer_run_id,
-            layer=GOLD_LAYER
-        )
-    row_count = incremental_df.count()
-    log_event(
-        logger_gold_facts,
-        "INFO",
-        f"Incremental silver rows to process: {row_count}",
+        f"Reading silver fact table with backfill mode: {backfill_config.get('mode', 'incremental')}",
         master_run_id=master_run_id,
         layer_run_id=layer_run_id,
         layer=GOLD_LAYER
-    )   
+    )
     
-    return incremental_df
+    # CRITICAL FIX: Check if we need to derive ingestion_date for date_range backfill
+    is_date_range_backfill = (
+        backfill_config.get("is_backfill") and 
+        backfill_config.get("mode") == "date_range"
+    )
+    
+    if is_date_range_backfill:
+        # Read the silver table first to check columns
+        df_silver = spark.table(silver_table)
+        
+        if "ingestion_date" not in df_silver.columns:
+            log_event(
+                logger_gold_facts,
+                "INFO",
+                f"Fact table missing ingestion_date column - deriving from bronze_ingestion_ts",
+                master_run_id=master_run_id,
+                layer_run_id=layer_run_id,
+                layer=GOLD_LAYER
+            )
+            
+            # Derive ingestion_date from bronze_ingestion_ts
+            df_silver = df_silver.withColumn("ingestion_date", to_date(col("bronze_ingestion_ts")))
+            
+            # Apply date range filter manually since we derived the column
+            start_date = backfill_config.get("start_date")
+            end_date = backfill_config.get("end_date")
+            
+            log_event(
+                logger_gold_facts,
+                "INFO",
+                f"Filtering fact table by derived ingestion_date: {start_date} to {end_date}",
+                master_run_id=master_run_id,
+                layer_run_id=layer_run_id,
+                layer=GOLD_LAYER
+            )
+            
+            # Apply date filter
+            df_filtered = df_silver.filter(
+                (col("ingestion_date") >= lit(start_date)) & 
+                (col("ingestion_date") <= lit(end_date))
+            )
+            
+            return df_filtered
+    
+    # For incremental mode or full_refresh, use the standard utility
+    # (it handles watermark logic and full table reads)
+    return get_incremental_with_backfill(
+        spark=spark,
+        source_table=silver_table,
+        target_table=gold_table,
+        backfill_config=backfill_config,
+        master_run_id=master_run_id,
+        layer_run_id=layer_run_id,
+        layer=layer,
+        ingestion_col=ingestion_col,
+        date_partition_col=date_partition_col
+    )
+# What just happened?
+# ✅ Added backfill_config parameter to signature
+# ✅ Added date_partition_col parameter to signature
+# ✅ REMOVED all 80+ lines of manual watermark logic (checking max timestamp, filtering, etc.)
+# ✅ REPLACED with single call to get_incremental_with_backfill() which handles all 3 modes
+
+
 
 # -----------------------------
 # 1. Read Silver Table
 # -----------------------------
 def read_silver_table(
-    spark, 
-    silver_table: str,
-    gold_table: str,
+    spark, silver_table: str, 
+    gold_table: str, 
+    backfill_config: dict,  # backfill parameter
     required_columns, 
     master_run_id: str, 
-    layer_run_id: str,
+    layer_run_id: str, 
     layer: str
 ):
     """
@@ -151,7 +313,7 @@ def read_silver_table(
 
     Args:
         spark (SparkSession): Active Spark session.
-        table_name (str): Name of the Silver table to read from.
+        gold_table (str): Name of the Silver table to read from.
         log_event (logger_gold_facts): log_event instance to log pipeline progress.
         required_columns (list): List of columns that must exist in the Silver table.
 
@@ -167,12 +329,33 @@ def read_silver_table(
         f"Reading Silver fact table: {silver_table}",
         master_run_id=master_run_id,
         layer_run_id=layer_run_id,
-        layer=GOLD_LAYER
+        layer=GOLD_LAYER,
     )
 
     try:
-        # Read the Delta table into a DataFrame incrementally
-        df = get_incremental_silver_for_facts(spark, silver_table, gold_table, master_run_id=master_run_id, layer_run_id=layer_run_id, layer=GOLD_LAYER, ingestion_col="ingestion_ts")
+        # # Read the Delta table into a DataFrame incrementally
+        # df = get_incremental_silver_for_facts(
+        #     spark,
+        #     silver_table,
+        #     gold_table,
+        #     master_run_id=master_run_id,
+        #     layer_run_id=layer_run_id,
+        #     layer=GOLD_LAYER,
+        #     ingestion_col="silver_ingestion_ts",
+        # )
+
+        # Read the Delta table into a DataFrame incrementally (with backfill support)
+        df = get_incremental_silver_for_facts(
+            spark, 
+            silver_table, 
+            gold_table,
+            backfill_config=backfill_config,  # backfill
+            master_run_id=master_run_id, 
+            layer_run_id=layer_run_id, 
+            layer=GOLD_LAYER, 
+            ingestion_col="silver_ingestion_ts",
+            date_partition_col="ingestion_date"  # backfill
+        )
 
         # -----------------------------
         # Check if dataframe has rows FIRST
@@ -186,11 +369,11 @@ def read_silver_table(
                 f"No incremental rows found in {silver_table}",
                 master_run_id=master_run_id,
                 layer_run_id=layer_run_id,
-                layer=GOLD_LAYER
+                layer=GOLD_LAYER,
             )
 
-            return df   # Skip column validation completely
-        
+            return df  # Skip column validation completely
+
         # Check if dataframe is empty (table missing scenario)
         if len(df.columns) == 0:
             log_event(
@@ -199,10 +382,9 @@ def read_silver_table(
                 f"Silver table '{silver_table}' does not exist or returned empty schema. Skipping processing.",
                 master_run_id=master_run_id,
                 layer_run_id=layer_run_id,
-                layer=GOLD_LAYER
+                layer=GOLD_LAYER,
             )
             return df
-
 
         # -----------------------------
         # Optional columns that may not exist yet in Silver
@@ -214,9 +396,7 @@ def read_silver_table(
         # Validate strictly required columns (from config)
         missing_required = [c for c in required_columns if c not in df.columns]
         if missing_required:
-            raise ValueError(
-                f"Missing required columns in Silver table '{silver_table}': {missing_required}"
-            )
+            raise ValueError(f"Missing required columns in Silver table '{silver_table}': {missing_required}")
 
         # Add optional columns if they are missing
         for col_name, default_value in optional_columns_with_defaults.items():
@@ -229,7 +409,7 @@ def read_silver_table(
             f"Successfully read Silver table: {silver_table}",
             master_run_id=master_run_id,
             layer_run_id=layer_run_id,
-            layer=GOLD_LAYER
+            layer=GOLD_LAYER,
         )
         return df
     except Exception as e:
@@ -239,7 +419,7 @@ def read_silver_table(
             f"Failed to read Silver table {silver_table}: {e}",
             master_run_id=master_run_id,
             layer_run_id=layer_run_id,
-            layer=GOLD_LAYER
+            layer=GOLD_LAYER,
         )  # Log error if loading fails
         raise
 
@@ -247,16 +427,16 @@ def read_silver_table(
 # -----------------------------
 # 2. Prepare Fact Table Columns
 # -----------------------------
-def prepare_fact_columns(df, master_run_id: str, layer_run_id: str, layer: str):
+def prepare_fact_columns(df, master_run_id: str, entity_columns, hash_column:str, meta_columns, layer_run_id: str, layer: str):
     """
-    Prepares the fact table by adding a 'gold_load_ts' timestamp column for auditing and idempotency.
+    Prepares the fact table by adding a 'gold_ingestion_ts' timestamp column for auditing and idempotency.
 
     Args:
         df (DataFrame): Silver fact table DataFrame to be transformed.
         log_event (logger_gold_facts): log_event instance to track the process.
 
     Returns:
-        DataFrame: Transformed DataFrame with added 'gold_load_ts' column.
+        DataFrame: Transformed DataFrame with added 'gold_ingestion_ts' column.
     """
     log_event(
         logger_gold_facts,
@@ -264,18 +444,28 @@ def prepare_fact_columns(df, master_run_id: str, layer_run_id: str, layer: str):
         "Preparing fact table columns for Gold",
         master_run_id=master_run_id,
         layer_run_id=layer_run_id,
-        layer=GOLD_LAYER
+        layer=GOLD_LAYER,
     )
-    df_prepared = df.withColumn(
-        "gold_load_ts", current_timestamp()
-    )  # Add timestamp for auditing
+    
+    # Add gold load timestamp
+    # df = df.withColumn("gold_ingestion_ts", current_timestamp())
+    df = (
+        df.withColumn(hash_column, sha2(concat_ws("||", *[coalesce(col(c), lit("")) for c in entity_columns]), 256))  # Generate SHA-256 hash for full row
+        .withColumn("gold_ingestion_ts", current_timestamp())  # Add timestamp for tracking
+    )
+
+    # Select required columns
+    cols_for_fact = entity_columns + [hash_column, *meta_columns, "gold_ingestion_ts"]
+
+    df_prepared = df.select(*cols_for_fact)
+
     log_event(
         logger_gold_facts,
         "INFO",
         "Fact table columns prepared successfully",
         master_run_id=master_run_id,
         layer_run_id=layer_run_id,
-        layer=GOLD_LAYER
+        layer=GOLD_LAYER,
     )
     return df_prepared
 
@@ -283,9 +473,7 @@ def prepare_fact_columns(df, master_run_id: str, layer_run_id: str, layer: str):
 # -----------------------------
 # 3. Create Gold Table if Not Exists
 # -----------------------------
-def create_gold_table_if_not_exists(
-    df, gold_tbl, master_run_id: str, layer_run_id: str, layer: str
-):
+def create_gold_table_if_not_exists(df, gold_tbl, master_run_id: str, layer_run_id: str, layer: str):
     """
     Checks if the Gold fact table exists. If not, creates an empty Delta Gold table to ensure
     the merge operation works smoothly later in the pipeline.
@@ -295,20 +483,23 @@ def create_gold_table_if_not_exists(
         gold_tbl (str): Name of the Gold table.
         log_event (logger_gold_facts): log_event instance to track the process.
     """
-    log_event(logger_gold_facts, "INFO", f"Checking if Gold table {gold_tbl} exists", master_run_id=master_run_id, layer_run_id=layer_run_id, layer=GOLD_LAYER)
-    if not df.sparkSession.catalog.tableExists(
-        gold_tbl
-    ):  # Check if the Gold table exists in the catalog
-        df.limit(0).write.format("delta").mode("ignore").saveAsTable(
-            gold_tbl
-        )  # Create an empty table if not exists
+    log_event(
+        logger_gold_facts,
+        "INFO",
+        f"Checking if Gold table {gold_tbl} exists",
+        master_run_id=master_run_id,
+        layer_run_id=layer_run_id,
+        layer=GOLD_LAYER,
+    )
+    if not df.sparkSession.catalog.tableExists(gold_tbl):  # Check if the Gold table exists in the catalog
+        df.limit(0).write.format("delta").mode("ignore").saveAsTable(gold_tbl)  # Create an empty table if not exists
         log_event(
             logger_gold_facts,
             "INFO",
             f"Gold table {gold_tbl} created",
             master_run_id=master_run_id,
-            layer_run_id=layer_run_id, 
-            layer=GOLD_LAYER
+            layer_run_id=layer_run_id,
+            layer=GOLD_LAYER,
         )
     else:
         log_event(
@@ -317,16 +508,14 @@ def create_gold_table_if_not_exists(
             f"Gold table {gold_tbl} already exists",
             master_run_id=master_run_id,
             layer_run_id=layer_run_id,
-            layer=GOLD_LAYER
+            layer=GOLD_LAYER,
         )
 
 
 # -----------------------------
 # 4. Merge Fact Table into Gold
 # -----------------------------
-def merge_fact_into_gold(
-    df, gold_tbl, natural_keys, hash_column, master_run_id: str, layer_run_id: str, layer: str
-):
+def merge_fact_into_gold(df, gold_tbl, natural_keys, hash_column, master_run_id: str, layer_run_id: str, layer: str):
     """
     Performs an idempotent merge from the Silver fact table into the Gold fact table.
     - Updates only rows where the hash has changed.
@@ -339,37 +528,76 @@ def merge_fact_into_gold(
         hash_column (str): Column name used for hashing records to track changes.
         log_event (logger_gold_facts): log_event instance to track progress.
     """
-    log_event(
-        logger_gold_facts,
-        "INFO",
-        f"Starting merge into Gold table {gold_tbl}",
-        master_run_id=master_run_id,
-        layer_run_id=layer_run_id,
-        layer=GOLD_LAYER
-    )
-    gold_delta = DeltaTable.forName(
-        df.sparkSession, gold_tbl
-    )  # Get a DeltaTable object for the Gold table
-    merge_condition = " AND ".join(
-        [f"tgt.{k} = src.{k}" for k in natural_keys]
-    )  # Matching condition based on business keys
+    try:
+        log_event(
+            logger_gold_facts,
+            "INFO",
+            f"Starting merge into Gold table {gold_tbl}",
+            master_run_id=master_run_id,
+            layer_run_id=layer_run_id,
+            layer=GOLD_LAYER,
+        )
+        
+        # Get Delta table
+        gold_delta = DeltaTable.forName(df.sparkSession, gold_tbl)
 
-    # Perform the MERGE operation
-    gold_delta.alias("tgt").merge(df.alias("src"), merge_condition).whenMatchedUpdate(
-        condition=f"tgt.{hash_column} <> src.{hash_column}",  # Only update if hash values differ
-        set={
-            c: f"src.{c}" for c in df.columns
-        },  # Set updated values from the source DataFrame
-    ).whenNotMatchedInsertAll().execute()  # Insert new records if they don't match
-    log_event(
-        logger_gold_facts,
-        "INFO",
-        f"Merge completed for Gold table {gold_tbl}",
-        master_run_id=master_run_id,
-        layer_run_id=layer_run_id,
-        layer=GOLD_LAYER
-    )
+        # Build merge condition
+        merge_condition = " AND ".join([
+            f"tgt.{k} = src.{k}" for k in natural_keys
+        ])
 
+        # Execute MERGE
+        gold_delta.alias("tgt").merge(
+            df.alias("src"),
+            merge_condition
+        ).whenMatchedUpdate(
+            # Only update if hash values differ
+            condition=f"tgt.{hash_column} <> src.{hash_column}",
+            # Set updated values from the source DataFrame
+            set={c: f"src.{c}" for c in df.columns},
+            # Insert new records if they don't match
+        ).whenNotMatchedInsertAll().execute()
+
+        log_event(
+            logger_gold_facts,
+            "INFO",
+            f"Merge completed for Gold table {gold_tbl}",
+            master_run_id=master_run_id,
+            layer_run_id=layer_run_id,
+            layer=GOLD_LAYER,
+        )
+        
+        # --- METRICS: read immediately after merge ---
+        hist = gold_delta.history(1).select("operationMetrics").collect()[0][0]
+
+        # inserted row fetch from history include actual new and new updated version of existing rows 
+        new_versions_inserted = int(hist.get("numTargetRowsInserted", 0))
+
+        #updated rows only 
+        updated_records = int(hist.get("numTargetRowsUpdated", 0))
+        
+        # To compute actual new insterted rows 
+        inserted= new_versions_inserted-updated_records
+
+        merge_metrics = {
+            "inserted": inserted,
+            "updated": updated_records
+        }
+
+    except Exception as e:
+        log_event(
+            logger_gold_facts,
+            "ERROR",
+            f"Merge failed for Gold table {gold_tbl}: {str(e)}",
+            master_run_id=master_run_id,
+            layer_run_id=layer_run_id,
+            layer=GOLD_LAYER,
+        )
+        raise
+
+    return {
+        "merge_metrics": merge_metrics,
+    }
 
 # -----------------------------
 # 5. Collect Fact Metrics
@@ -378,15 +606,15 @@ def collect_fact_metrics(
     spark,
     df,
     metrics_table,
+    merge_metrics, 
+    is_initial_load,
     layer_name,
-    table_name,
+    gold_table: str,
     silver_table: str,
     table_type: str,
     start_ts,
     end_ts,
     duration_secs,
-    run_status,
-    notes,
     master_run_id: str,
     layer_run_id: str,
     layer: str
@@ -396,10 +624,10 @@ def collect_fact_metrics(
     the performance of each pipeline run.
 
     Captures the following metrics:
-    - rows_read (from Silver table)
-    - rows_inserted (from Delta MERGE operation)
-    - rows_updated (from Delta MERGE operation)
-    - rows_unchanged (calculated as remaining rows)
+    - read_rows(from Silver table)
+    - inserted_rows (from Delta MERGE operation)
+    - updated_rows (from Delta MERGE operation)
+    - unchanged_rows (calculated as remaining rows)
 
     Args:
         spark (SparkSession): Active Spark session.
@@ -415,122 +643,165 @@ def collect_fact_metrics(
     log_event(
         logger_gold_facts,
         "INFO",
-        f"Collecting fact metrics for {table_name}",
+        f"Collecting fact metrics for {gold_table}",
         master_run_id=master_run_id,
         layer_run_id=layer_run_id,
-        layer=GOLD_LAYER
+        layer=GOLD_LAYER,
     )
     # -----------------------------
-    # Detect missing source table
+    # DEFAULTS
     # -----------------------------
-    if len(df.columns) == 0:
-        log_event(
-            logger_gold_facts,
-            "WARN",
-            f"No table found in source {silver_table}",
-            master_run_id=master_run_id,
-            layer_run_id=layer_run_id,
-            layer=GOLD_LAYER
-        )
+    read_rows = 0
+    inserted_rows = 0
+    updated_rows = 0
+    unchanged_rows = 0
 
-        rows_read = 0
-        rows_inserted = 0
-        rows_updated = 0
-        rows_unchanged = 0
-        rows_soft_deleted = 0
-        rows_current = 0
-        throughput_rows_per_sec = 0.0
-        skew_ratio = 0.0
+    active_rows = 0
+    total_rows = 0
 
-        notes = f"Source silver table '{silver_table}' does not exist"
+    throughput_rows_per_sec = 0.0
+    skew_ratio = 0.0
+    duration_secs=duration_secs or 0
 
+    merge_metrics = merge_metrics or {}
+    soft_deleted_rows = 0
+    is_initial_load = bool(is_initial_load)
+
+    run_status = "SUCCESS"
+    load_type = None
+    notes = None
+
+    
+    # -----------------------------
+    # CASE 1: Silver missing
+    # -----------------------------
+    if df is None:
+        load_type = "NO_DATA"
+        run_status = "SKIPPED"
+        notes = f"Source silver table {silver_table} does not exist" 
         has_rows = False
 
+    # -----------------------------
+    # CASE 2: Silver empty
+    # -----------------------------
+    elif df.limit(1).count() == 0:
+        load_type = "INCREMENTAL"
+        run_status = "SKIPPED"
+        notes = f"No incremental rows in silver table {silver_table}" 
+        has_rows = False
+        
+    # --------------------------------------
+    # CASE 3: Normal processing/Data present
+    # --------------------------------------
     else:
-        # -----------------------------
-        # Safe check if df has any rows
-        # -----------------------------
-        has_rows = df.limit(1).count() > 0
-
-        # -----------------------------
-        # Initialize defaults
-        # -----------------------------
-        rows_read = 0
-        rows_inserted = 0
-        rows_updated = 0
-        rows_unchanged = rows_read
-        rows_soft_deleted = 0
-        rows_current = 0  # Fact tables usually append, no soft deletes unless modeled
-        throughput_rows_per_sec = 0.0
-        skew_ratio = 0.0
-
+        has_rows = True
         # -----------------------------
         # If rows exist, get Delta MERGE metrics
         # -----------------------------
-        if has_rows:
+        try:
+            read_rows= df.count()  # Only count if there are rows
+
+            # -----------------------------
+            # Read input rows from Silver
+            # -----------------------------
+            read_rows = df.count()
+
+            # -----------------------------
+            # Extract MERGE metrics
+            # -----------------------------
+            inserted_rows = merge_metrics.get("inserted", 0)
+            updated_rows = merge_metrics.get("updated", 0)
+
+            # -----------------------------
+            # DERIVED METRICS
+            # unchanged_rows = rows that came from Silver but did not result in insert/update
+            # -----------------------------
+            unchanged_rows = max(read_rows - (inserted_rows + updated_rows), 0)
+
+            # -----------------------------
+            # CHANGE DETECTION
+            # Fact tables do NOT have soft deletes (unlike dimensions)
+            # -----------------------------
+            has_changes = (inserted_rows + updated_rows) > 0
+        
+            # -----------------------------
+            # Status + Execution Mode
+            # -----------------------------
+            # INITIAL_LOAD  → first time full population
+            # NO_CHANGE     → data arrived but no changes detected
+            # UPSERT_APPLIED  → inserts/updates applied
+            # ---------------------------------------------------
+
+           
+            # CASE 3.1: INITIAL LOAD
+            # First-time load into Gold table
+            
+            if is_initial_load:
+                load_type = "INITIAL_LOAD"
+                notes = f"Initial load completed for {gold_table}"
+            
+            # CASE 3.2: NO_CHANGE
+            elif  not has_changes:
+                load_type = "INCREMENTAL"
+                notes = f"No changes detected for {gold_table}"
+                
+            # CASE 3.3: Real UPSERT changes occurred
+            else:
+                load_type = "INCREMENTAL"
+                notes = f"UPSERT changes applied to {gold_table}"
+
+            run_status = "SUCCESS"
+                    
+            # -----------------------------
+            # Compute active and total rows
+            # -----------------------------
             try:
-                rows_read = df.count()  # Only count if there are rows
-                history_df = spark.sql(f"DESCRIBE HISTORY {table_name}")
-                latest_merge = (
-                    history_df.filter(col("operation") == "MERGE")
-                    .orderBy(col("timestamp").desc())
-                    .limit(1)
-                    .collect()
-                )
+                active_rows = spark.table(gold_table).count()
+                total_rows = active_rows
+            except Exception:
+                active_rows = 0
+                total_rows = 0
+                    
+        except Exception as e:
+            log_event(
+                logger_gold_facts,
+                "WARN",
+                f"Unable to fetch Delta MERGE metrics for {gold_table}: {e}",
+                master_run_id=master_run_id,
+                layer_run_id=layer_run_id,
+                layer=GOLD_LAYER,
+            )
 
-                if latest_merge:
-                    op_metrics = latest_merge[0]["operationMetrics"]
-                    rows_inserted = int(op_metrics.get("numInsertedRows", 0))
-                    rows_updated = int(op_metrics.get("numUpdatedRows", 0))
+        # -----------------------------
+        # Ensure defaults for timestamps & notes
+        # -----------------------------
+        start_ts = start_ts or spark.sql("SELECT current_timestamp() as ts").first()["ts"]
+        end_ts = end_ts or spark.sql("SELECT current_timestamp() as ts").first()["ts"]
+        duration_secs = duration_secs or 0
+        notes = notes or ("No rows/files processed" if read_rows== 0 else "")
 
-                rows_unchanged = rows_read - rows_inserted - rows_updated
+        # -----------------------------
+        # Compute throughput and skew
+        # -----------------------------
+        throughput_rows_per_sec = round(read_rows/ duration_secs, 2) if duration_secs > 0 else 0.0
 
-            except Exception as e:
-                log_event(
-                    logger_gold_facts,
-                    "WARN",
-                    f"Unable to fetch Delta MERGE metrics for {table_name}: {e}",
-                    master_run_id=master_run_id,
-                    layer_run_id=layer_run_id,
-                    layer=GOLD_LAYER
-                )
+        if has_rows:
+            partition_counts = df.withColumn("partition_id", spark_partition_id()).groupBy("partition_id").count().collect()
 
-    # -----------------------------
-    # Ensure defaults for timestamps & notes
-    # -----------------------------
-    start_ts = start_ts or spark.sql("SELECT current_timestamp() as ts").first()["ts"]
-    end_ts = end_ts or spark.sql("SELECT current_timestamp() as ts").first()["ts"]
-    duration_secs = duration_secs or 0
-    notes = notes or ("No rows/files processed" if rows_read == 0 else "")
+            counts = [r["count"] for r in partition_counts]
 
-    # -----------------------------
-    # Compute throughput and skew
-    # -----------------------------
-    throughput_rows_per_sec = round(rows_read / duration_secs, 2) if duration_secs > 0 else 0.0
+            max_partition_rows = max(counts) if counts else 0
+            avg_partition_rows = sum(counts) / len(counts) if counts else 1
 
-    if has_rows:
-        partition_counts = (
-            df.withColumn("partition_id", spark_partition_id())
-            .groupBy("partition_id")
-            .count()
-            .collect()
-        )
-
-        counts = [r["count"] for r in partition_counts]
-
-        max_partition_rows = max(counts) if counts else 0
-        avg_partition_rows = sum(counts) / len(counts) if counts else 1
-
-        skew_ratio = round(max_partition_rows / avg_partition_rows, 2) if avg_partition_rows > 0 else 0.0
-    else:
-        skew_ratio = 0.0
-
-
+            skew_ratio = round(max_partition_rows / avg_partition_rows, 2) if avg_partition_rows > 0 else 0.0
+        else:
+            skew_ratio = 0.0
 
     # ------------------------------------------------------------------
     # 1. Create table if not exists (enterprise-grade template pattern)
     # ------------------------------------------------------------------
-    spark.sql(f"""
+    spark.sql(
+        f"""
     CREATE TABLE IF NOT EXISTS {metrics_table} (
         master_run_id STRING,
         layer_run_id STRING,
@@ -543,18 +814,20 @@ def collect_fact_metrics(
         end_ts TIMESTAMP,
         duration_secs BIGINT,
 
-        rows_read BIGINT,
-        rows_inserted BIGINT,
-        rows_updated BIGINT,
-        rows_unchanged BIGINT,
-        rows_soft_deleted BIGINT,
-        rows_current BIGINT,
+        read_rows BIGINT,
+        inserted_rows BIGINT,
+        updated_rows BIGINT,
+        unchanged_rows BIGINT,
+        soft_deleted_rows BIGINT,
+        active_rows BIGINT,
+        total_rows BIGINT,
 
         throughput_rows_per_sec DOUBLE,
         skew_ratio DOUBLE,
 
+        load_type STRING,
         run_status STRING,
-        load_timestamp TIMESTAMP, -- Timestamp in Australia/Sydney
+        load_timestamp TIMESTAMP, 
         notes STRING
     )
     USING DELTA
@@ -562,70 +835,69 @@ def collect_fact_metrics(
         delta.autoOptimize.optimizeWrite = true,
         delta.autoOptimize.autoCompact = true
     )
-    """)
+    """
+    )
 
     # ------------------------------------------------------------------
     # 2. Explicit schema definition for DataFrame (avoids inference issues)
     # ------------------------------------------------------------------
-    schema = StructType([
-        StructField("master_run_id", StringType(), False),
-        StructField("layer_run_id", StringType(), False),
-        StructField("layer_name", StringType(), False),
-        StructField("source_table", StringType(), False),
-        StructField("target_table", StringType(), False),
-        StructField("table_type", StringType(), True),
-
-        StructField("start_ts", TimestampType(), True),
-        StructField("end_ts", TimestampType(), True),
-        StructField("duration_secs", LongType(), True),
-
-        StructField("rows_read", LongType(), True),
-        StructField("rows_inserted", LongType(), True),
-        StructField("rows_updated", LongType(), True),
-        StructField("rows_unchanged", LongType(), True),
-        StructField("rows_soft_deleted", LongType(), True),
-        StructField("rows_current", LongType(), True),
-
-        StructField("throughput_rows_per_sec", DoubleType(), True),
-        StructField("skew_ratio", DoubleType(), True),
-
-        StructField("run_status", StringType(), True),
-        StructField("notes", StringType(), True),
-    ])
+    schema = StructType(
+        [
+            StructField("master_run_id", StringType(), False),
+            StructField("layer_run_id", StringType(), False),
+            StructField("layer_name", StringType(), False),
+            StructField("source_table", StringType(), False),
+            StructField("target_table", StringType(), False),
+            StructField("table_type", StringType(), True),
+            StructField("start_ts", TimestampType(), True),
+            StructField("end_ts", TimestampType(), True),
+            StructField("duration_secs", LongType(), True),
+            StructField("read_rows", LongType(), True),
+            StructField("inserted_rows", LongType(), True),
+            StructField("updated_rows", LongType(), True),
+            StructField("unchanged_rows", LongType(), True),
+            StructField("soft_deleted_rows", LongType(), True),
+            StructField("active_rows", LongType(), True),
+            StructField("total_rows", LongType(), True),
+            StructField("throughput_rows_per_sec", DoubleType(), True),
+            StructField("skew_ratio", DoubleType(), True),
+            StructField("load_type", StringType(), True),
+            StructField("run_status", StringType(), True),
+            StructField("notes", StringType(), True)
+        ]
+    )
 
     # ------------------------------------------------------------------
     # 3. Create a single-row DataFrame representing this execution event
     # ------------------------------------------------------------------
     metrics_df = spark.createDataFrame(
-        [(
-            master_run_id,
-            layer_run_id,
-            layer_name,
-            silver_table,
-            table_name,
-            table_type,
-
-            start_ts,
-            end_ts,
-            duration_secs,
-
-            rows_read,
-            rows_inserted,
-            rows_updated,
-            rows_unchanged,
-            None,                  # rows_soft_deleted → NULL for fact
-            None,                  # rows_current→ NULL for fact
-
-            throughput_rows_per_sec,
-            skew_ratio,
-
-            run_status,
-            notes
-        )],
-        schema=schema
-    ).withColumn(
-        "load_timestamp", current_timestamp()
-    )
+        [
+            (
+                master_run_id,
+                layer_run_id,
+                layer_name,
+                silver_table,
+                gold_table,
+                table_type,
+                start_ts,
+                end_ts,
+                duration_secs,
+                read_rows,
+                inserted_rows,
+                updated_rows,
+                unchanged_rows,
+                soft_deleted_rows,  
+                active_rows, 
+                total_rows, 
+                throughput_rows_per_sec,
+                skew_ratio,
+                load_type,
+                run_status,
+                notes
+            )
+        ],
+        schema=schema,
+    ).withColumn("load_timestamp", current_timestamp())
 
     # Append metrics to dedicated dashboard table
     metrics_df.write.format("delta").mode("append").saveAsTable(metrics_table)
@@ -633,11 +905,10 @@ def collect_fact_metrics(
     log_event(
         logger_gold_facts,
         "INFO",
-        f"Fact metrics recorded | "
-        f"read={rows_read}, inserted={rows_inserted}, updated={rows_updated}",
+        f"Fact metrics recorded | " f"read={read_rows}, inserted={inserted_rows}, updated={updated_rows}",
         master_run_id=master_run_id,
         layer_run_id=layer_run_id,
-        layer=GOLD_LAYER
+        layer=GOLD_LAYER,
     )
 
 
@@ -658,8 +929,12 @@ def optimize_gold_table(spark, gold_tbl, z_order_cols, master_run_id: str, layer
     log_event(
         logger_gold_facts,
         "INFO",
-        f"Optimizing {gold_tbl} using ZORDER BY {z_order_cols}", master_run_id=master_run_id, layer_run_id=layer_run_id, layer=GOLD_LAYER)
-    
+        f"Optimizing {gold_tbl} using ZORDER BY {z_order_cols}",
+        master_run_id=master_run_id,
+        layer_run_id=layer_run_id,
+        layer=GOLD_LAYER,
+    )
+
     if not spark.catalog.tableExists(gold_tbl):
         log_event(
             logger_gold_facts,
@@ -667,21 +942,24 @@ def optimize_gold_table(spark, gold_tbl, z_order_cols, master_run_id: str, layer
             f"Gold table {gold_tbl} does not exist. Skipping z-odering operation.",
             master_run_id=master_run_id,
             layer_run_id=layer_run_id,
-            layer=GOLD_LAYER
+            layer=GOLD_LAYER,
         )
         return
-    spark.sql(
-        f"OPTIMIZE {gold_tbl} ZORDER BY ({','.join(z_order_cols)})"
-    )  # Perform Z-Ordering for optimization
-    log_event(logger_gold_facts, "INFO", f"Optimization completed for {gold_tbl}", master_run_id=master_run_id, layer_run_id=layer_run_id, layer=GOLD_LAYER)
+    spark.sql(f"OPTIMIZE {gold_tbl} ZORDER BY ({','.join(z_order_cols)})")  # Perform Z-Ordering for optimization
+    log_event(
+        logger_gold_facts,
+        "INFO",
+        f"Optimization completed for {gold_tbl}",
+        master_run_id=master_run_id,
+        layer_run_id=layer_run_id,
+        layer=GOLD_LAYER,
+    )
 
 
 # -----------------------------
 # 7. Vacuum Gold Table
 # -----------------------------
-def vacuum_gold_table(
-    spark, gold_tbl, master_run_id: str, layer_run_id: str,layer: str, retention_hours=168
-):
+def vacuum_gold_table(spark, gold_tbl, master_run_id: str, layer_run_id: str, layer: str, retention_hours=168):
     """
     Performs a Delta VACUUM operation to remove stale files after a specified retention period.
     This step helps in cleaning up files and improving storage efficiency.
@@ -701,7 +979,7 @@ def vacuum_gold_table(
         f"Vacuuming {gold_tbl}, retention={retention_hours} hours",
         master_run_id=master_run_id,
         layer_run_id=layer_run_id,
-        layer=GOLD_LAYER
+        layer=GOLD_LAYER,
     )
 
     if not spark.catalog.tableExists(gold_tbl):
@@ -711,13 +989,11 @@ def vacuum_gold_table(
             f"Gold table {gold_tbl} does not exist. Skipping vacuuming operation.",
             master_run_id=master_run_id,
             layer_run_id=layer_run_id,
-            layer=GOLD_LAYER
+            layer=GOLD_LAYER,
         )
         return
 
-    spark.sql(
-        f"VACUUM {gold_tbl} RETAIN {retention_hours} HOURS"
-    )  # Clean up old files from Delta table
+    spark.sql(f"VACUUM {gold_tbl} RETAIN {retention_hours} HOURS")  # Clean up old files from Delta table
 
     log_event(
         logger_gold_facts,
@@ -725,5 +1001,5 @@ def vacuum_gold_table(
         f"Vacuum completed for {gold_tbl}",
         master_run_id=master_run_id,
         layer_run_id=layer_run_id,
-        layer=GOLD_LAYER
+        layer=GOLD_LAYER,
     )
