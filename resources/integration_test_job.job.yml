@@ -13,11 +13,15 @@ resources:
         A failed assertion fails its task -> fails the job (non-zero exit) so CI
         can block the merge.
 
+        Notebook paths are bundle-relative (${workspace.file_path}) so the job
+        reads the code the bundle deployed for the target. Assert notebooks get
+        a helpers_path parameter pointing at the deployed _helpers folder.
+
       tasks:
         # 1. Seed dirty data into the isolated raw volume
         - task_key: seed
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/tests/integration_databricks/01_seed_integration_data
+            notebook_path: ${workspace.file_path}/tests/integration_databricks/01_seed_integration_data
             source: WORKSPACE
           environment_key: integration_test_environment
 
@@ -39,32 +43,40 @@ resources:
           depends_on:
             - task_key: run_pipeline
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/tests/integration_databricks/bronze/assert_bronze
+            notebook_path: ${workspace.file_path}/tests/integration_databricks/bronze/assert_bronze
             source: WORKSPACE
+            base_parameters:
+              helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
           environment_key: integration_test_environment
 
         - task_key: assert_silver
           depends_on:
             - task_key: run_pipeline
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/tests/integration_databricks/silver/assert_silver
+            notebook_path: ${workspace.file_path}/tests/integration_databricks/silver/assert_silver
             source: WORKSPACE
+            base_parameters:
+              helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
           environment_key: integration_test_environment
 
         - task_key: assert_gold_dim
           depends_on:
             - task_key: run_pipeline
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/tests/integration_databricks/gold/assert_dim
+            notebook_path: ${workspace.file_path}/tests/integration_databricks/gold/assert_dim
             source: WORKSPACE
+            base_parameters:
+              helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
           environment_key: integration_test_environment
 
         - task_key: assert_gold_fact
           depends_on:
             - task_key: run_pipeline
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/tests/integration_databricks/gold/assert_fact
+            notebook_path: ${workspace.file_path}/tests/integration_databricks/gold/assert_fact
             source: WORKSPACE
+            base_parameters:
+              helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
           environment_key: integration_test_environment
 
         # 4. Second incremental load: seed a changed + an unchanged customer
@@ -75,7 +87,7 @@ resources:
             - task_key: assert_gold_dim
             - task_key: assert_gold_fact
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/tests/integration_databricks/02_seed_scd2_change
+            notebook_path: ${workspace.file_path}/tests/integration_databricks/02_seed_scd2_change
             source: WORKSPACE
           environment_key: integration_test_environment
 
@@ -96,8 +108,10 @@ resources:
           depends_on:
             - task_key: run_pipeline_2
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/tests/integration_databricks/gold/assert_scd2_change
+            notebook_path: ${workspace.file_path}/tests/integration_databricks/gold/assert_scd2_change
             source: WORKSPACE
+            base_parameters:
+              helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
           environment_key: integration_test_environment
 
         # 6. Always clean up (even if an assertion failed)
@@ -106,7 +120,7 @@ resources:
             - task_key: assert_scd2_change
           run_if: ALL_DONE
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/tests/integration_databricks/04_cleanup_integration
+            notebook_path: ${workspace.file_path}/tests/integration_databricks/04_cleanup_integration
             source: WORKSPACE
           environment_key: integration_test_environment
 

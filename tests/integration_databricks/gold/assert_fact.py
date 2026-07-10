@@ -10,7 +10,8 @@
 # COMMAND ----------
 
 import sys
-sys.path.append("/Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/tests/integration_databricks/_helpers")
+# Deployed _helpers location is passed in by the job (bundle-relative).
+sys.path.append(dbutils.widgets.get("helpers_path"))
 from assertion_helpers import check, count, count_or_zero, columns, table_exists, finalize, CATALOG, ENV, BRONZE, SILVER, GOLD, QUARANTINE, AUDIT, METRICS, SEED_ROW_COUNT, BUSINESS_KEYS
 
 from pyspark.sql.functions import col
