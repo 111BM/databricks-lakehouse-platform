@@ -138,3 +138,10 @@ env_paths:
     schema_location: "/Volumes/workspace/default/my_filestore_prod/superstore_metadata/superstore_bronze_metadata/schema/"
     checkpoint_location: "/Volumes/workspace/default/my_filestore_prod/superstore_metadata/superstore_bronze_metadata/checkpoint/"
 
+  # Isolated environment used ONLY by the automated integration test job.
+  # Must match where 01_seed_integration_data writes the seed CSV.
+  integration_test:
+    raw_source_file_path: "/Volumes/workspace/default/my_filestore_integration_test/raw/"
+    schema_location: "/Volumes/workspace/default/my_filestore_integration_test/superstore_metadata/superstore_bronze_metadata/schema/"
+    checkpoint_location: "/Volumes/workspace/default/my_filestore_integration_test/superstore_metadata/superstore_bronze_metadata/checkpoint/"
+
