@@ -54,14 +54,19 @@ resources:
           default: ${var.end_date}
         - name: dry-run
           default: ${var.dry_run}
-      
+        # Overridable environment. Defaults to the target's env (dev/qa/prod) so
+        # normal runs are unchanged; the integration test job overrides this to
+        # "integration_test" to route the whole pipeline to isolated schemas + volume.
+        - name: superstore-env
+          default: ${var.SUPERSTORE_ENV}
+
       tasks:
         - task_key: superstore_pipeline_master_run_id_init
           notebook_task:
             notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities/superstore_pipeline_master_run_id_init
             source: WORKSPACE
             base_parameters:
-              SUPERSTORE_ENV: ${var.SUPERSTORE_ENV}
+              SUPERSTORE_ENV: "{{job.parameters.superstore-env}}"
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
           environment_key: superstore_bronze_layer_environment 
@@ -71,7 +76,7 @@ resources:
           notebook_task:
             notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities/superstore_catalog_and_schemas_init
             base_parameters:
-              SUPERSTORE_ENV: ${var.SUPERSTORE_ENV}
+              SUPERSTORE_ENV: "{{job.parameters.superstore-env}}"
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
@@ -84,7 +89,7 @@ resources:
           notebook_task:
             notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/superstore_orchestrator/layer_orchestrator/superstore_bronze_layer_ETL_pipeline_orchestrator
             base_parameters:
-              SUPERSTORE_ENV: ${var.SUPERSTORE_ENV}
+              SUPERSTORE_ENV: "{{job.parameters.superstore-env}}"
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
@@ -102,7 +107,7 @@ resources:
           notebook_task:
             notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/superstore_orchestrator/layer_orchestrator/superstore_silver_layer_ETL_pipeline_orchestrator
             base_parameters:
-              SUPERSTORE_ENV: ${var.SUPERSTORE_ENV}
+              SUPERSTORE_ENV: "{{job.parameters.superstore-env}}"
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
@@ -120,7 +125,7 @@ resources:
           notebook_task:
             notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/superstore_orchestrator/layer_orchestrator/superstore_gold_dimensional_ETL_pipeline_orchestrator
             base_parameters:
-              SUPERSTORE_ENV: ${var.SUPERSTORE_ENV}
+              SUPERSTORE_ENV: "{{job.parameters.superstore-env}}"
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
@@ -138,7 +143,7 @@ resources:
           notebook_task:
             notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/superstore_orchestrator/layer_orchestrator/superstore_gold_facts_ETL_pipeline_orchestrator
             base_parameters:
-              SUPERSTORE_ENV: ${var.SUPERSTORE_ENV}
+              SUPERSTORE_ENV: "{{job.parameters.superstore-env}}"
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
