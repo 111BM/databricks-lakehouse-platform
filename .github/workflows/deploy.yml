@@ -79,42 +79,82 @@ jobs:
       #     file: ./coverage.xml
 
   # --------------------------------------------------------------------------
-  # Job 2: Deploy to Dev/QA (Auto)
+  # Job 2a: Deploy to Dev (Auto, on push to dev)
   # --------------------------------------------------------------------------
-  deploy-non-prod:
+  deploy-dev:
     needs: unit-tests
-    if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/qa'
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    
+
     env:
       DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
       DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Databricks CLI
         uses: databricks/setup-cli@main
-      
-      - name: Set target from branch
-        id: target
+
+      # Provide a pinned Terraform so `bundle deploy` uses it instead of doing its
+      # own signed download, which can fail with "openpgp: key expired". 1.5.5 is
+      # the version the Databricks CLI expects, so there's no version mismatch.
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.5"
+          terraform_wrapper: false
+
+      - name: Point Databricks CLI at Terraform
         run: |
-          BRANCH="${GITHUB_REF##*/}"
-          case "$BRANCH" in
-            dev) TARGET=dev ;;
-            qa)  TARGET=qa ;;
-            *) echo "Unexpected branch: $BRANCH"; exit 1 ;;
-          esac
-          echo "target=$TARGET" >> $GITHUB_OUTPUT
-          echo "Deploying to: $TARGET"
-      
+          echo "DATABRICKS_TF_EXEC_PATH=$(which terraform)" >> "$GITHUB_ENV"
+          echo "DATABRICKS_TF_VERSION=1.5.5" >> "$GITHUB_ENV"
+
       # CRITICAL: Validate before deploy (catches YAML errors, missing vars)
-      - name: Validate bundle
-        run: databricks bundle validate --target ${{ steps.target.outputs.target }}
-      
-      - name: Deploy to ${{ steps.target.outputs.target }}
-        run: databricks bundle deploy --target ${{ steps.target.outputs.target }}
+      - name: Validate bundle (dev)
+        run: databricks bundle validate --target dev
+
+      - name: Deploy to dev
+        run: databricks bundle deploy --target dev
+
+  # --------------------------------------------------------------------------
+  # Job 2b: Deploy to QA (Auto, on push to qa)
+  # --------------------------------------------------------------------------
+  deploy-qa:
+    needs: unit-tests
+    if: github.ref == 'refs/heads/qa'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@main
+
+      # Provide a pinned Terraform so `bundle deploy` uses it instead of doing its
+      # own signed download, which can fail with "openpgp: key expired". 1.5.5 is
+      # the version the Databricks CLI expects, so there's no version mismatch.
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.5"
+          terraform_wrapper: false
+
+      - name: Point Databricks CLI at Terraform
+        run: |
+          echo "DATABRICKS_TF_EXEC_PATH=$(which terraform)" >> "$GITHUB_ENV"
+          echo "DATABRICKS_TF_VERSION=1.5.5" >> "$GITHUB_ENV"
+
+      # CRITICAL: Validate before deploy (catches YAML errors, missing vars)
+      - name: Validate bundle (qa)
+        run: databricks bundle validate --target qa
+
+      - name: Deploy to qa
+        run: databricks bundle deploy --target qa
 
   # --------------------------------------------------------------------------
   # Job 3: Deploy to Production (Manual Approval Required)
@@ -140,6 +180,19 @@ jobs:
       
       - name: Install Databricks CLI
         uses: databricks/setup-cli@main
+
+      # Provide a pinned Terraform so `bundle deploy` uses it instead of doing its
+      # own signed download, which can fail with "openpgp: key expired". 1.5.5 is
+      # the version the Databricks CLI expects, so there's no version mismatch.
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.5"
+          terraform_wrapper: false
+
+      - name: Point Databricks CLI at Terraform
+        run: |
+          echo "DATABRICKS_TF_EXEC_PATH=$(which terraform)" >> "$GITHUB_ENV"
+          echo "DATABRICKS_TF_VERSION=1.5.5" >> "$GITHUB_ENV"
       
       - name: Validate bundle (prod)
         run: databricks bundle validate --target prod
