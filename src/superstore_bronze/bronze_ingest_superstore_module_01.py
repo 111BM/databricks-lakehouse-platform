@@ -106,7 +106,8 @@ from superstore_platform_constants import BRONZE_LAYER
 # -----------------------------
 from superstore_platform_config import (
     get_bronze_schema,
-    table
+    table,
+    get_env
 )
 from superstore_backfill_utils import get_bronze_backfill_config # backfill
 
@@ -213,6 +214,13 @@ def bronze_ingest_incremental(
     else:
         include_existing = False
 
+    # Integration tests seed the raw file BEFORE the pipeline starts, so the seed
+    # is "pre-existing" at stream start. With includeExistingFiles=False Auto Loader
+    # would skip it (0 rows ingested). The isolated integration_test env must
+    # backfill the seed; dev/qa/prod keep incremental (new-files-only) behavior.
+    if get_env() == "integration_test":
+        include_existing = True
+
     # -----------------------------
     # Step 2: Read stream from CloudFiles using Auto Loader
     # -----------------------------
@@ -225,11 +233,11 @@ def bronze_ingest_incremental(
         )  # Process CSV files, can be changed to Parquet or other formats
         .option("header", "true")  # First row contains headers
         .option(
-            "cloudFiles.includeExistingFiles", "False"
-            # "cloudFiles.includeExistingFiles", 
-            # str(include_existing)  # backfill
-
-        )  # Read files that exist at the beginning, when true=scan and ingest all files and when false= ingest only files after ingest start igonre before stream or exist files
+            # integration_test backfills the seed (include_existing=True); dev/qa/prod
+            # stay incremental (False). true = scan + ingest all existing files;
+            # false = ingest only files that arrive after the stream starts.
+            "cloudFiles.includeExistingFiles", str(include_existing).lower()
+        )
         .option(
             "cloudFiles.schemaLocation", schema_location
         )  # Schema evolution support

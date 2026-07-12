@@ -1,13 +1,25 @@
-# Databricks notebook source
-# MAGIC %md
-# MAGIC # Integration Test — Shared Assertion Helpers
-# MAGIC
-# MAGIC `%run` this from each layer's assert notebook to get a small assertion
-# MAGIC harness plus the isolated-environment config. Each layer notebook runs as
-# MAGIC its own job task, collects failures, and calls `finalize()` to raise (and
-# MAGIC fail that task) if anything is wrong.
+"""Integration Test — Shared Assertion Helpers.
 
-# COMMAND ----------
+Imported (NOT %run) by each layer's assert notebook:
+
+    import sys
+    sys.path.append(dbutils.widgets.get("helpers_path"))
+    from assertion_helpers import check, count, ..., finalize
+
+This file is a PLAIN Python module — it must NOT start with the
+`# Databricks notebook source` header, or the bundle deploys it as a notebook
+and `from assertion_helpers import ...` fails with NotebookImportException.
+
+Each layer notebook runs as its own job task, collects failures, and calls
+finalize() to raise (and fail that task) if anything is wrong.
+"""
+
+from pyspark.sql import SparkSession
+
+# The module is imported into a running notebook/job, so an active Spark
+# session already exists; getOrCreate() returns it (a plain module has no
+# auto-injected `spark` the way a notebook does).
+spark = SparkSession.builder.getOrCreate()
 
 # ---- Isolated environment config (CONFIRM matches databricks.yml / bronze config) ----
 CATALOG = "superstore_catalog"
@@ -30,8 +42,6 @@ BUSINESS_KEYS = {
     "orders": ["order_id"],
     "sales": ["order_id", "product_id"],
 }
-
-# COMMAND ----------
 
 # ---- Assertion harness ----
 _failures = []

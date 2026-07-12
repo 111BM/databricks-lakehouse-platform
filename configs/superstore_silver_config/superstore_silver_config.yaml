@@ -18,6 +18,10 @@ silver_table_configs:
         - West
         - Central
         - South
+      segment:
+        - Consumer
+        - Corporate
+        - Home Office
     metrics_table: silver_layer_metrics
     layer_name: silver
     business_columns:

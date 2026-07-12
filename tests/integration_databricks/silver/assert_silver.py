@@ -63,12 +63,19 @@ if check(f"{q_cust} exists", table_exists(q_cust)):
     qc = spark.table(q_cust)
     check("quarantine caught the null Customer ID row",
           qc.filter(col("customer_id").isNull()).count() >= 1)
+    # AA-10480 violates BOTH customers categorical rules: invalid segment 'Premium'
+    # and invalid region 'North'. It must be quarantined and error_columns must name
+    # both failing rules. (Its order is also dirtied in the seed so the fact table
+    # doesn't orphan a customer that no longer exists in the dimension.)
     check("quarantine caught the invalid segment 'Premium'",
           qc.filter(col("segment") == "Premium").count() >= 1)
-    # error_columns should name the failing rule
+    check("quarantine caught the invalid region 'North'",
+          qc.filter(col("region") == "North").count() >= 1)
     if "error_columns" in qc.columns:
         check("quarantine error_columns names the segment rule",
               qc.filter(array_contains(col("error_columns"), "segment")).count() >= 1)
+        check("quarantine error_columns names the region rule",
+              qc.filter(array_contains(col("error_columns"), "region")).count() >= 1)
 
 # ship_date < order_date -> orders_dirty
 q_ord = f"{QUARANTINE}.orders_dirty"
@@ -85,11 +92,10 @@ if table_exists(sc):
     cg = df.filter(col("customer_id") == "CG-12520")
     check("silver.customers deduped CG-12520 to a single row", cg.count() == 1,
           f"rows={cg.count()}")
-    # the surviving row is the newest (name carries 'UPDATED' in the seed's latest dup)
-    if cg.count() == 1 and "customer_name" in df.columns:
-        name = cg.first()["customer_name"]
-        check("silver kept the LATEST CG-12520 version", "UPDATED" in (name or ""),
-              f"customer_name={name}")
+    # NOTE: "which version survives" is NOT asserted here — all CG-12520 rows share
+    # one ingestion batch (same bronze_ingestion_ts), so latest-wins ordering is
+    # non-deterministic within a single load. The changed-version-wins semantics are
+    # deterministically tested across two batches by assert_scd2_change.
 
 a_cust = f"{AUDIT}.customers_duplicates"
 check("audit.customers_duplicates captured the losing duplicate(s)",

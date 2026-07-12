@@ -32,7 +32,7 @@ resources:
           run_job_task:
             job_id: ${resources.jobs.superstore_data_platform.id}
             job_parameters:
-              superstore-env: "integration_test"
+              SUPERSTORE_ENV: "integration_test"
               backfill-mode: "incremental"
               start-date: ""
               end-date: ""
@@ -97,7 +97,7 @@ resources:
           run_job_task:
             job_id: ${resources.jobs.superstore_data_platform.id}
             job_parameters:
-              superstore-env: "integration_test"
+              SUPERSTORE_ENV: "integration_test"
               backfill-mode: "incremental"
               start-date: ""
               end-date: ""

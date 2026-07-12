@@ -34,14 +34,16 @@ for p in [RAW_PATH, SCHEMA_LOCATION, CHECKPOINT_LOCATION]:
 # Scenarios encoded:
 #   - clean rows                          -> Silver
 #   - blank Customer ID                   -> quarantine (null business key)
-#   - invalid Segment "Premium"           -> quarantine (categorical rule)
+#   - invalid Segment "Premium" + Region  -> quarantine (categorical rules);
+#     AA-10480's order is also ship-before-order, so the order is quarantined too
+#     and the fact table never references a customer missing from the dimension.
 #   - Ship Date before Order Date         -> quarantine (business rule)
 #   - duplicate Order ID/Product ID       -> audit (older loses to newer)
 SEED_CSV = """Row ID,Order ID,Order Date,Ship Date,Ship Mode,Customer ID,Customer Name,Segment,Country,City,State,Postal Code,Region,Product ID,Category,Sub-Category,Product Name,Sales,Quantity,Discount,Profit
 1,CA-2026-0001,2026-01-05,2026-01-08,Standard Class,CG-12520,Claire Gute,Consumer,United States,Henderson,Kentucky,42420,South,FUR-BO-10001798,Furniture,Bookcases,Bush Bookcase,261.96,2,0.0,41.91
 2,CA-2026-0002,2026-01-06,2026-01-09,Standard Class,DV-13045,Darrin Van,Corporate,United States,Los Angeles,California,90036,West,OFF-PA-10000174,Office Supplies,Paper,Easy-staple paper,51.94,3,0.0,24.43
 3,CA-2026-0003,2026-01-07,2026-01-10,Second Class,,No Id Customer,Consumer,United States,Boston,Massachusetts,02101,East,TEC-PH-10002033,Technology,Phones,Phone X,99.99,1,0.0,10.00
-4,CA-2026-0004,2026-01-08,2026-01-11,Standard Class,AA-10480,Bad Segment,Premium,United States,Miami,Florida,33101,South,OFF-ST-10000760,Office Supplies,Storage,Storage box,55.50,2,0.0,5.00
+4,CA-2026-0004,2026-01-08,2026-01-06,Standard Class,AA-10480,Bad Categorical,Premium,United States,Miami,Florida,33101,North,OFF-ST-10000760,Office Supplies,Storage,Storage box,55.50,2,0.0,5.00
 5,CA-2026-0005,2026-01-20,2026-01-10,Standard Class,BH-11710,Ship Before Order,Consumer,United States,Chicago,Illinois,60601,Central,FUR-CH-10000454,Furniture,Chairs,Office chair,120.00,1,0.0,12.00
 6,CA-2026-0006,2026-01-09,2026-01-12,Standard Class,CG-12520,Claire Gute,Consumer,United States,Henderson,Kentucky,42420,South,FUR-BO-10001798,Furniture,Bookcases,Bush Bookcase,261.96,2,0.0,41.91
 7,CA-2026-0006,2026-01-09,2026-01-12,First Class,CG-12520,Claire Gute,Consumer,United States,Henderson,Kentucky,42420,South,FUR-BO-10001798,Furniture,Bookcases,Bush Bookcase UPDATED,261.96,2,0.0,41.91
