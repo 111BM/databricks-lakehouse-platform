@@ -40,11 +40,6 @@ Usage:
 ===============================================================
 """
 
-import uuid
-import sys
-sys.path.append(
-    "/Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities"
-)
 from superstore_logger import create_master_run_id, create_run_id_for_layer
 
 # -----------------------------

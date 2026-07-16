@@ -42,15 +42,13 @@ Usage:
 ==============================================================
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, Optional, Tuple
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import col, lit, max as spark_max
 from pyspark.sql.types import StructType
-import sys
 
-# Import shared utilities
-sys.path.append("/Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities")
+
 from superstore_logger import get_superstore_logger, log_event
 
 logger = get_superstore_logger("superstore_backfill_utils")

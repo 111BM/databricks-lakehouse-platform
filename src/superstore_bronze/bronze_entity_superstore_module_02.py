@@ -35,31 +35,6 @@ Best Practices / Notes:
 - Module is designed for serverless Databricks compute with minimal resource usage.
 ==============================================================
 """
-
-# -----------------------------
-# System utilities
-# Used for path handling and environment setup (e.g., adding shared libraries)
-# -----------------------------
-import sys
-
-# Extend Python path to include shared utility modules in Databricks workspace
-sys.path.append(
-    "/Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities"
-)
-
-# -----------------------------
-# YAML configuration loader
-# Used for reading pipeline configuration files (Bronze metadata, entity configs, etc.)
-# -----------------------------
-import yaml
-
-# Load Bronze configuration from YAML file
-with open(
-    "/Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/configs/superstore_bronze_config/superstore_bronze_config.yaml",
-    "r"
-) as f:
-    bronze_config = yaml.safe_load(f)
-
 # -----------------------------
 # Custom logging framework
 # Used for pipeline observability, auditing, and centralized logging

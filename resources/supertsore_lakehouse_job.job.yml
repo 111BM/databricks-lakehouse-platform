@@ -69,7 +69,7 @@ resources:
       tasks:
         - task_key: superstore_pipeline_master_run_id_init
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities/superstore_pipeline_master_run_id_init
+            notebook_path: ${workspace.file_path}/src/superstore_shared_utilities/superstore_pipeline_master_run_id_init
             source: WORKSPACE
             base_parameters:
               SUPERSTORE_ENV: "{{job.parameters.SUPERSTORE_ENV}}"
@@ -80,7 +80,7 @@ resources:
           depends_on:
             - task_key: superstore_pipeline_master_run_id_init
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities/superstore_catalog_and_schemas_init
+            notebook_path: ${workspace.file_path}/src/superstore_shared_utilities/superstore_catalog_and_schemas_init
             base_parameters:
               SUPERSTORE_ENV: "{{job.parameters.SUPERSTORE_ENV}}"
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
@@ -93,7 +93,7 @@ resources:
             - task_key: superstore_pipeline_master_run_id_init
             - task_key: superstore_catalog_and_schemas_init
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/superstore_orchestrator/layer_orchestrator/superstore_bronze_layer_ETL_pipeline_orchestrator
+            notebook_path: ${workspace.file_path}/superstore_orchestrator/layer_orchestrator/superstore_bronze_layer_ETL_pipeline_orchestrator
             base_parameters:
               SUPERSTORE_ENV: "{{job.parameters.SUPERSTORE_ENV}}"
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
@@ -111,7 +111,7 @@ resources:
             - task_key: superstore_pipeline_master_run_id_init
             - task_key: superstore_bronze_layer
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/superstore_orchestrator/layer_orchestrator/superstore_silver_layer_ETL_pipeline_orchestrator
+            notebook_path: ${workspace.file_path}/superstore_orchestrator/layer_orchestrator/superstore_silver_layer_ETL_pipeline_orchestrator
             base_parameters:
               SUPERSTORE_ENV: "{{job.parameters.SUPERSTORE_ENV}}"
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
@@ -129,7 +129,7 @@ resources:
             - task_key: superstore_pipeline_master_run_id_init
             - task_key: superstore_silver_layer
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/superstore_orchestrator/layer_orchestrator/superstore_gold_dimensional_ETL_pipeline_orchestrator
+            notebook_path: ${workspace.file_path}/superstore_orchestrator/layer_orchestrator/superstore_gold_dimensional_ETL_pipeline_orchestrator
             base_parameters:
               SUPERSTORE_ENV: "{{job.parameters.SUPERSTORE_ENV}}"
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
@@ -147,7 +147,7 @@ resources:
             - task_key: superstore_pipeline_master_run_id_init
             - task_key: superstore_silver_layer
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/superstore_orchestrator/layer_orchestrator/superstore_gold_facts_ETL_pipeline_orchestrator
+            notebook_path: ${workspace.file_path}/superstore_orchestrator/layer_orchestrator/superstore_gold_facts_ETL_pipeline_orchestrator
             base_parameters:
               SUPERSTORE_ENV: "{{job.parameters.SUPERSTORE_ENV}}"
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
@@ -165,61 +165,61 @@ resources:
             - task_key: superstore_gold_layer_facts
             - task_key: superstore_gold_layer_dimensions
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/features/features_customer
+            notebook_path: ${workspace.file_path}/src/features/features_customer
             source: WORKSPACE
           environment_key: superstore_bronze_layer_environment
         - task_key: features_customer_product
           depends_on:
             - task_key: superstore_gold_layer_facts
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/features/features_customer_product
+            notebook_path: ${workspace.file_path}/src/features/features_customer_product
             source: WORKSPACE
         - task_key: features_product
           depends_on:
             - task_key: superstore_gold_layer_facts
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/features/features_product
+            notebook_path: ${workspace.file_path}/src/features/features_product
             source: WORKSPACE
         - task_key: features_sales_timeseries
           depends_on:
             - task_key: superstore_gold_layer_facts
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/features/features_sales_timeseries
+            notebook_path: ${workspace.file_path}/src/features/features_sales_timeseries
             source: WORKSPACE
         - task_key: mart_customer_360
           depends_on:
             - task_key: superstore_gold_layer_facts
             - task_key: superstore_gold_layer_dimensions
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/marts/mart_customer_360
+            notebook_path: ${workspace.file_path}/src/marts/mart_customer_360
             source: WORKSPACE
           environment_key: superstore_bronze_layer_environment
         - task_key: customer_kpi_view
           depends_on:
             - task_key: mart_customer_360
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/metrics/customer_kpi
+            notebook_path: ${workspace.file_path}/src/metrics/customer_kpi
             source: WORKSPACE
         - task_key: mart_production_performance
           depends_on:
             - task_key: superstore_gold_layer_dimensions
             - task_key: superstore_gold_layer_facts
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/marts/mart_production_performance
+            notebook_path: ${workspace.file_path}/src/marts/mart_production_performance
             source: WORKSPACE
           environment_key: superstore_bronze_layer_environment
         - task_key: product_insights_kpi_view
           depends_on:
             - task_key: mart_production_performance
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/metrics/product_insights_kpi
+            notebook_path: ${workspace.file_path}/src/metrics/product_insights_kpi
             source: WORKSPACE
         - task_key: mart_sales_daily
           depends_on:
             - task_key: superstore_gold_layer_dimensions
             - task_key: superstore_gold_layer_facts
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/marts/mart_sales_daily
+            notebook_path: ${workspace.file_path}/src/marts/mart_sales_daily
             source: WORKSPACE
           environment_key: superstore_bronze_layer_environment
         - task_key: metrics_business_kpi_view
@@ -227,13 +227,13 @@ resources:
             - task_key: mart_sales_daily
             - task_key: mart_customer_360
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/metrics/metrics_business_kpi
+            notebook_path: ${workspace.file_path}/src/metrics/metrics_business_kpi
             source: WORKSPACE
         - task_key: metrics_daily_kpi_view
           depends_on:
             - task_key: mart_sales_daily
           notebook_task:
-            notebook_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/metrics/metrics_daily_kpi
+            notebook_path: ${workspace.file_path}/src/metrics/metrics_daily_kpi
             source: WORKSPACE
       queue:
         enabled: true

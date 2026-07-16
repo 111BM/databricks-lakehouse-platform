@@ -51,9 +51,7 @@ Best Practices / Notes:
 # Core Python + Utility Imports
 # -------------------------------
 # Standard libraries for logging, UUID generation, Spark session handling, and system operations
-import logging  # Python logging framework for structured logs
 from uuid import uuid4  # Generates unique identifiers for pipeline run tracking
-import sys  # Enables path manipulation for shared code imports
 
 # PySpark core session and transformation functions
 from pyspark.sql import SparkSession  # Entry point for Spark execution
@@ -82,16 +80,6 @@ from pyspark.sql.types import (
     IntegerType,
     DoubleType
 )
-
-
-# -------------------------------
-# Shared Utilities Path
-# -------------------------------
-# Adds reusable platform utilities (logging, config, and orchestration helpers)
-sys.path.append(
-    "/Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities"
-)
-
 
 # -------------------------------
 # Core Framework Imports

@@ -75,9 +75,8 @@ import pytz
 from datetime import datetime
 import os
 
-import sys
-sys.path.append('/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities')
-from superstore_platform_constants import BRONZE_LAYER, SILVER_LAYER, GOLD_LAYER, DEFAULT_PIPELINE_NAME, DEFAULT_PIPELINE_VERSION
+
+from superstore_platform_constants import DEFAULT_PIPELINE_NAME, DEFAULT_PIPELINE_VERSION
 
 # -----------------------------
 # Helper functions to read runtime env
