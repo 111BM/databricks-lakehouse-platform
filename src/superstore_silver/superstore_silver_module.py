@@ -140,13 +140,6 @@ from pyspark.sql.types import (
 # -----------------------------
 from uuid import uuid4  # Generates unique identifiers for tracking runs/events
 
-# -----------------------------
-# System Path Configuration
-# -----------------------------
-import sys   # Used to append path for shared utilities
-
-# Add shared utilities path (logging, config, helpers)
-sys.path.append("/Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities")
 
 # -----------------------------
 # Platform Utilities

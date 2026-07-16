@@ -100,16 +100,6 @@ from pyspark.sql.types import (
 )
 
 # -------------------------------
-# Add Shared Utilities Path
-# -------------------------------
-# Enables reuse of logging, config, and platform utilities across layers
-import sys
-
-sys.path.append(
-    "/Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities"
-)
-
-# -------------------------------
 # Custom Framework Imports
 # -------------------------------
 from superstore_logger import get_superstore_logger, log_event  # centralized logging framework
