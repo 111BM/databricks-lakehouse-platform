@@ -54,7 +54,6 @@ Best Practices / Notes:
 # -------------------------------
 # Standard Python Libraries
 # -------------------------------
-import math          # used for mathematical operations (e.g., rounding, calculations)
 import logging       # fallback logging utility (framework also uses custom logger)
 
 # -------------------------------
@@ -583,50 +582,6 @@ def create_gold_table_if_not_exists(
         )
         raise
 
-
-# -----------------------------
-# 5. Dynamically Calculate Partitions
-# -----------------------------
-def dynamically_calculate_partitions(
-    master_run_id: str, layer_run_id: str, layer: str, silver_df, repaired_df, partition_column
-):
-    """
-    Dynamically repartitions data based on volume:
-    - Ensures memory-efficient processing for large datasets
-    - Uses heuristics: 1 partition per 1M rows, min 200 partitions
-    - Facilitates distributed merge and SCD2 operations
-    """
-    log_event(
-        logger_gold_dimensional,
-        "INFO",
-        "Starting data repartitioning.",
-        master_run_id=master_run_id,
-        layer_run_id=layer_run_id,
-        layer=GOLD_LAYER
-    )
-    try:
-        record_count = silver_df.count()
-        num_partitions = max(200, math.ceil(record_count / 1000000))
-        repaired_df = repaired_df.repartition(num_partitions, partition_column)
-        log_event(
-            logger_gold_dimensional,
-            "INFO",
-            f"Repartitioned data into {num_partitions} partitions",
-            master_run_id=master_run_id,
-            layer_run_id=layer_run_id,
-            layer=GOLD_LAYER
-        )
-        return repaired_df
-    except Exception as e:
-        log_event(
-            logger_gold_dimensional,
-            "ERROR",
-            f"Failed to repartition data: {e}",
-            master_run_id=master_run_id,
-            layer_run_id=layer_run_id,
-            layer=GOLD_LAYER
-        )
-        raise
 
 # -----------------------------
 # 6. Merge Data into Gold Table (SCD2 Handling)
