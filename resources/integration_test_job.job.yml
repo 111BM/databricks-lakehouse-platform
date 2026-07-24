@@ -129,4 +129,11 @@ resources:
       environments:
         - environment_key: integration_test_environment
           spec:
-            environment_version: "4"
+            environment_version: "5"
+
+      email_notifications:
+        on_failure:
+          - bireshmoktan@gmail.com
+        no_alert_for_skipped_runs: true
+
+      performance_target: PERFORMANCE_OPTIMIZED
