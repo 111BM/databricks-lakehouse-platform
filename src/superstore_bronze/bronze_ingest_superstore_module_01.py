@@ -11,7 +11,10 @@ Purpose:
 Key Features:
 1. Incremental Ingestion:
     - Uses Databricks Auto Loader with `availableNow` trigger.
-    - Processes only new files; ignores previously ingested data.
+    - AUTO-DETECTS initial vs incremental runs by checking checkpoint existence.
+    - Initial run (no checkpoint): loads all existing files in source path.
+    - Incremental runs (checkpoint exists): processes only new files added since last run.
+    - No manual configuration needed - automatically adapts per environment.
     - Supports schema evolution for new columns without breaking ingestion.
 
 2. Metadata Enrichment:
@@ -47,7 +50,7 @@ from pyspark.sql import DataFrame
 
 # -----------------------------
 # PySpark SQL functions
-# Used for transformations, parsing, aggregation, and column operations
+# Used for transformations, parsing, and column operations
 # -----------------------------
 from pyspark.sql.functions import (
     current_timestamp,   # adds ingestion timestamps
@@ -55,29 +58,24 @@ from pyspark.sql.functions import (
     element_at,          # array/map extraction
     split,               # string splitting
     to_date,             # date conversion
-    lit,                 # literal values
-    regexp_replace,      # string cleanup / normalization
-    sum, avg, min, max   # aggregation functions
-)
-
-# -----------------------------
-# PySpark data types
-# Used for defining explicit schemas for DataFrames and tables
-# -----------------------------
-from pyspark.sql.types import (
-    StructType,
-    StructField,
-    StringType,
-    TimestampType,
-    LongType
+    lit                  # literal values
 )
 
 # -----------------------------
 # Standard Python libraries
-# Used for regex handling, unique IDs, and system-level operations
+# Used for regex handling and system-level operations
 # -----------------------------
 import re
+import sys
+import os
 
+# -----------------------------
+# Extend Python path for shared utilities
+# Enables importing project-specific reusable modules in Databricks workspace
+# -----------------------------
+sys.path.append(
+    "/Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities"
+)
 
 # -----------------------------
 # Custom logging utilities
@@ -107,6 +105,28 @@ from superstore_backfill_utils import get_bronze_backfill_config # backfill
 # -----------------------------
 # Initialize logger to capture events in the Bronze ingestion pipeline
 logger_bronze_ingest = get_superstore_logger("bronze_ingest_superstore_module_01")
+
+
+# -----------------------------
+# Checkpoint Detection Helper
+# -----------------------------
+# Detects if this is the initial run by checking if checkpoint location exists
+def is_initial_run(checkpoint_location: str) -> bool:
+    """
+    True when the Auto Loader stream has never committed against this checkpoint.
+
+    A missing OR empty directory both mean "first run" - an empty directory is a
+    real case (a prior run created the path but never committed, or the path was
+    pre-created), and treating it as incremental would silently ingest 0 rows.
+    
+    Arguments:
+        checkpoint_location: Path to the checkpoint directory.
+    
+    Returns:
+        True if checkpoint doesn't exist or is empty (initial run), 
+        False if it exists and has content (incremental run).
+    """
+    return not os.path.isdir(checkpoint_location) or not os.listdir(checkpoint_location)
 
 
 # -----------------------------
@@ -203,7 +223,23 @@ def bronze_ingest_incremental(
             layer=BRONZE_LAYER
         )
     else:
-        include_existing = False
+        # AUTO-DETECT: Initial run vs incremental run
+        # Initial run (no checkpoint) → include_existing=True (load all existing files)
+        # Incremental run (checkpoint exists) → include_existing=False (only new files)
+        initial_run = is_initial_run(checkpoint_location)
+        include_existing = initial_run
+        
+        log_event(
+            logger_bronze_ingest,
+            "INFO",
+            "Auto-detected run mode",
+            initial_run=initial_run,
+            include_existing_files=include_existing,
+            checkpoint_exists=not initial_run,
+            master_run_id=master_run_id,
+            layer_run_id=layer_run_id,
+            layer=BRONZE_LAYER
+        )
 
     # Integration tests seed the raw file BEFORE the pipeline starts, so the seed
     # is "pre-existing" at stream start. With includeExistingFiles=False Auto Loader
@@ -224,9 +260,9 @@ def bronze_ingest_incremental(
         )  # Process CSV files, can be changed to Parquet or other formats
         .option("header", "true")  # First row contains headers
         .option(
-            # integration_test backfills the seed (include_existing=True); dev/qa/prod
-            # stay incremental (False). true = scan + ingest all existing files;
-            # false = ingest only files that arrive after the stream starts.
+            # AUTO-DETECT mode: initial run (no checkpoint) = true (load existing files),
+            # incremental runs (checkpoint exists) = false (only new files).
+            # integration_test overrides to true. Backfill config can also override.
             "cloudFiles.includeExistingFiles", str(include_existing).lower()
         )
         .option(
