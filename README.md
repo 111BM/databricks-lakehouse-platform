@@ -43,6 +43,24 @@ flowchart LR
 - **Idempotency & backfill** — hash-based change detection, Auto Loader checkpoints, and job parameters (`backfill-mode`: incremental / date_range / full_refresh, `dry-run`) for safe replays.
 - **Observability** — structured logging (`superstore_logger`) with `master_run_id`/`layer_run_id` traceability, per-entity metrics tables per layer, and email notifications on job failure.
 
+### Performance
+
+Validated end-to-end at **3M source rows**. The per-entity metrics tables make the pipeline
+self-profiling — they were used to find and fix a Silver bottleneck that **halved total runtime**:
+
+| Source rows | Before | After |
+|---|---|---|
+| 1,000,000 | 12 min 00 s | 8 min 32 s |
+| 3,000,000 | 23 min 53 s | **11 min 38 s** |
+
+The cause was a 7-format `coalesce(try_to_date(...))` where the actual source format sat second,
+so every row paid for a failed parse first — 803 s → 158 s for the affected entity after
+reordering. Full write-up, including the measurement method and a deliberately deferred
+optimization: **[docs/PERFORMANCE_INVESTIGATION.md](docs/PERFORMANCE_INVESTIGATION.md)**.
+
+Runtime is now ~60% serverless task startup and ~40% data processing at 3M rows, scaling
+linearly — so task consolidation, not Spark tuning, is the next meaningful lever.
+
 ---
 
 ## Testing
