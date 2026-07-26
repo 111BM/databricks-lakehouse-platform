@@ -131,6 +131,23 @@ from pyspark.sql.types import (
 )
 
 # -----------------------------
+# Date Parsing Formats
+# -----------------------------
+# Source dates are dd-MM-yyyy. That format is listed FIRST so the common case
+# short-circuits the coalesce below instead of failing a parse attempt on every
+# row. Order is safe to change only while no two formats can match the same
+# string with different meanings (dash vs slash keeps these disjoint).
+DATE_FORMATS = [
+    "dd-MM-yyyy",
+    "yyyy-MM-dd",
+    "d/M/yyyy",
+    "dd/MM/yyyy",
+    "yyyy/MMM/d",
+    "yyyy MMM d",
+    "d MMMM yyyy",
+]
+
+# -----------------------------
 # Optional Timezone Library
 # -----------------------------
 # import pytz  # Can be used for timezone conversions if required
@@ -494,20 +511,25 @@ def bronze_to_silver_prod(
 
             # Business rule: ship_date should not be before order_date
             if "order_date" in business_columns and "ship_date" in business_columns:
-                date_formats = [
-                    "d/M/yyyy", 
-                    "dd-MM-yyyy",
-                    "yyyy-MM-dd",
-                    "dd/MM/yyyy",
-                    "yyyy/MMM/d",
-                    "yyyy MMM d",
-                    "d MMMM yyyy"
-                ]
+            #     date_formats = [
+            #         "d/M/yyyy", 
+            #         "dd-MM-yyyy",
+            #         "yyyy-MM-dd",
+            #         "dd/MM/yyyy",
+            #         "yyyy/MMM/d",
+            #         "yyyy MMM d",
+            #         "d MMMM yyyy"
+            #     ]
 
+            #     def parse_multi_format_date(column_name):
+            #         return coalesce(*[
+            #             try_to_date(col(column_name), fmt)
+            #             for fmt in date_formats
+            #         ])
                 def parse_multi_format_date(column_name):
                     return coalesce(*[
                         try_to_date(col(column_name), fmt)
-                        for fmt in date_formats
+                        for fmt in DATE_FORMATS
                     ])
 
                 dq_df = dq_df.withColumn(
@@ -639,7 +661,7 @@ def bronze_to_silver_prod(
                 )
 
             # Step 6b: Cast string columns to DATE only if they are of StringType
-            date_formats = ["d/M/yyyy", "dd-MM-yyyy", "yyyy-MM-dd", "dd/MM/yyyy", "yyyy/MMM/d", "yyyy MMM d", "d MMMM yyyy"]
+            # date_formats = ["d/M/yyyy", "dd-MM-yyyy", "yyyy-MM-dd", "dd/MM/yyyy", "yyyy/MMM/d", "yyyy MMM d", "d MMMM yyyy"]
 
             # Explicitly cast order_date and ship_date to DateType using different formats if they are strings
             silver_cast_df = silver_df
@@ -652,7 +674,8 @@ def bronze_to_silver_prod(
                         # Try different date formats and coalesce the results to avoid nulls
                         silver_cast_df = silver_cast_df.withColumn(
                             c,
-                            coalesce(*[try_to_date(col(c), f) for f in date_formats])  # Use multiple formats
+                            # coalesce(*[try_to_date(col(c), f) for f in date_formats])  # Use multiple formats
+                            coalesce(*[try_to_date(col(c), f) for f in DATE_FORMATS])  # Use multiple formats
                         )
                     # If the column is already a DateType, skip casting and leave it as is
                     elif column_type == DateType():

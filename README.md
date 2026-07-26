@@ -31,7 +31,7 @@ flowchart LR
 
 | Layer | Modules | What it does |
 |---|---|---|
-| **Bronze** | `bronze_ingest_module_01`, `bronze_entity_module_02` | Auto Loader (`cloudFiles`) incremental CSV ingest into a one-big-table `superstore_raw` with metadata enrichment (source file, ingestion ts), then splits into entity tables (customers, products, orders, sales) preserving row counts and provenance |
+| **Bronze** | `bronze_ingest_superstore_module_01`, `bronze_entity_superstore_module_02` | Auto Loader (`cloudFiles`) incremental CSV ingest into a one-big-table `superstore_raw` with metadata enrichment (source file, ingestion ts), then splits into entity tables (customers, products, orders, sales) preserving row counts and provenance |
 | **Silver** | `superstore_silver_module` + `superstore_silver_transformations` (pure functions) | Cleansing, null-business-key / regex / categorical / business-rule validation with **quarantine routing**, latest-wins deduplication with **audit trail**, SHA-256 row hashing, Delta MERGE upserts |
 | **Gold** | `superstore_gold_dimension_framework`, `superstore_gold_facts_framework` | Config-driven **SCD2 dimensions** (one current row per key, closed validity ranges, no overlaps) and incremental fact tables with referential integrity to dimensions |
 | **Serving** | marts / features / metrics notebooks | Customer 360, sales daily, product performance marts; ML feature tables; business KPI views |
@@ -42,6 +42,24 @@ flowchart LR
 - **Environment isolation** — `SUPERSTORE_ENV` (dev/qa/prod/integration_test) resolves schemas (`{env}_bronze`, …) and volume paths per environment via a single job parameter.
 - **Idempotency & backfill** — hash-based change detection, Auto Loader checkpoints, and job parameters (`backfill-mode`: incremental / date_range / full_refresh, `dry-run`) for safe replays.
 - **Observability** — structured logging (`superstore_logger`) with `master_run_id`/`layer_run_id` traceability, per-entity metrics tables per layer, and email notifications on job failure.
+
+### Performance
+
+Validated end-to-end at **3M source rows**. The per-entity metrics tables make the pipeline
+self-profiling — they were used to find and fix a Silver bottleneck that **halved total runtime**:
+
+| Source rows | Before | After |
+|---|---|---|
+| 1,000,000 | 12 min 00 s | 8 min 32 s |
+| 3,000,000 | 23 min 53 s | **11 min 38 s** |
+
+The cause was a 7-format `coalesce(try_to_date(...))` where the actual source format sat second,
+so every row paid for a failed parse first — 803 s → 158 s for the affected entity after
+reordering. Full write-up, including the measurement method and a deliberately deferred
+optimization: **[docs/PERFORMANCE_INVESTIGATION.md](docs/PERFORMANCE_INVESTIGATION.md)**.
+
+Runtime is now ~60% serverless task startup and ~40% data processing at 3M rows, scaling
+linearly — so task consolidation, not Spark tuning, is the next meaningful lever.
 
 ---
 
@@ -74,6 +92,10 @@ seed dirty data → run REAL pipeline (SUPERSTORE_ENV=integration_test)
 ```
 
 Everything runs against isolated `integration_test_*` schemas and a dedicated volume — dev/qa/prod data is never touched. A failed assertion fails the job, which fails CI.
+
+![Integration test job DAG on Databricks Serverless](docs/images/integration_tests_DAG.png)
+
+*The `superstore_integration_test` job: the real pipeline run twice (initial load, then an SCD2 change), asserting every layer in between and always cleaning up — end to end in ~23 min on serverless.*
 
 ```bash
 databricks bundle run superstore_integration_test --target qa
@@ -110,6 +132,7 @@ src/
   superstore_silver/               # DQ/dedup module + pure transformation functions
   superstore_gold/core/            # SCD2 dimension + facts frameworks
   superstore_shared_utilities/     # logger, platform config, backfill utils, run-id init
+  dashboards/                      # executive, customer, product dashboards
   features/ | marts/ | metrics/    # serving-layer notebooks
 superstore_orchestrator/
   layer_orchestrator/              # per-layer orchestration notebooks

@@ -7,52 +7,59 @@ resources:
         
         PARAMETERS:
         
-        backfill-mode (string):
+        backfill_mode (string):
           • incremental  - Process only new data since last run (DEFAULT for scheduled runs)
-          • date_range   - Replay specific date range (requires start-date & end-date)
+          • date_range   - Replay specific date range (requires start_date & end_date)
           • full_refresh - Reprocess all data from scratch (DANGEROUS - use with caution)
         
-        start-date (YYYY-MM-DD):
+        start_date (YYYY-MM-DD):
           • Required for date_range mode
           • Example: 2026-05-08
           • Leave empty for incremental/full_refresh
         
-        end-date (YYYY-MM-DD):
+        end_date (YYYY-MM-DD):
           • Required for date_range mode
           • Example: 2026-05-10
           • Leave empty for incremental/full_refresh
         
-        dry-run (true | false):
+        dry_run (true | false):
           • true  - Validate without writing data (preview mode)
           • false - Execute and write data (DEFAULT)
         
         💡 USAGE EXAMPLES:
         
         Normal Run:
-          backfill-mode: incremental
-          dry-run: false
+          backfill_mode: incremental
+          dry_run: false
         
         Replay 1 Day:
-          backfill-mode: date_range
-          start-date: 2026-05-08
-          end-date: 2026-05-08
-          dry-run: false
+          backfill_mode: date_range
+          start_date: 2026-05-08
+          end_date: 2026-05-08
+          dry_run: false
         
         Full Backfill:
-          backfill-mode: full_refresh
-          start-date: 
-          end-date: 
-          dry-run: false
+          backfill_mode: full_refresh
+          start_date: 
+          end_date: 
+          dry_run: false
       
-      # Job-level parameters (visible in UI) - MUST use hyphens, not underscores
+      # Job-level parameters (visible in UI).
+      #
+      # Each name MUST MATCH the widget key the notebook reads (underscores here,
+      # e.g. dbutils.widgets.get("backfill_mode")). Databricks pushes a job parameter
+      # straight into a task widget that shares its key, so no base_parameters entry
+      # is needed. A hyphenated name does NOT resolve via {{job.parameters.x-y}} in
+      # base_parameters - it arrives literal, which silently disabled dry_run and
+      # backfill_mode until this was fixed.
       parameters:
-        - name: backfill-mode
+        - name: backfill_mode
           default: ${var.backfill_mode}
-        - name: start-date
+        - name: start_date
           default: ${var.start_date}
-        - name: end-date
+        - name: end_date
           default: ${var.end_date}
-        - name: dry-run
+        - name: dry_run
           default: ${var.dry_run}
         # Overridable environment. Defaults to the target's env (dev/qa/prod) so
         # normal runs are unchanged; the integration test job overrides this to
@@ -100,10 +107,6 @@ resources:
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
                 n_id}}"
-              backfill_mode: "{{job.parameters.backfill-mode}}"
-              start_date: "{{job.parameters.start-date}}"
-              end_date: "{{job.parameters.end-date}}"
-              dry_run: "{{job.parameters.dry-run}}"
             source: WORKSPACE
           environment_key: superstore_bronze_layer_environment
         - task_key: superstore_silver_layer
@@ -118,10 +121,6 @@ resources:
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
                 n_id}}"
-              backfill_mode: "{{job.parameters.backfill-mode}}"
-              start_date: "{{job.parameters.start-date}}"
-              end_date: "{{job.parameters.end-date}}"
-              dry_run: "{{job.parameters.dry-run}}"
             source: WORKSPACE
           environment_key: superstore_bronze_layer_environment
         - task_key: superstore_gold_layer_dimensions
@@ -136,10 +135,6 @@ resources:
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
                 n_id}}"
-              backfill_mode: "{{job.parameters.backfill-mode}}"
-              start_date: "{{job.parameters.start-date}}"
-              end_date: "{{job.parameters.end-date}}"
-              dry_run: "{{job.parameters.dry-run}}"
             source: WORKSPACE
           environment_key: superstore_bronze_layer_environment
         - task_key: superstore_gold_layer_facts
@@ -154,10 +149,6 @@ resources:
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
                 n_id}}"
-              backfill_mode: "{{job.parameters.backfill-mode}}"
-              start_date: "{{job.parameters.start-date}}"
-              end_date: "{{job.parameters.end-date}}"
-              dry_run: "{{job.parameters.dry-run}}"
             source: WORKSPACE
           environment_key: superstore_bronze_layer_environment
         - task_key: features_customer

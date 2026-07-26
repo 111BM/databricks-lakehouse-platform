@@ -33,10 +33,10 @@ resources:
             job_id: ${resources.jobs.superstore_data_platform.id}
             job_parameters:
               SUPERSTORE_ENV: "integration_test"
-              backfill-mode: "incremental"
-              start-date: ""
-              end-date: ""
-              dry-run: "false"
+              backfill_mode: "incremental"
+              start_date: ""
+              end_date: ""
+              dry_run: "false"
 
         # 3. Per-layer assertions (fan out from a single pipeline run)
         - task_key: assert_bronze
@@ -98,10 +98,10 @@ resources:
             job_id: ${resources.jobs.superstore_data_platform.id}
             job_parameters:
               SUPERSTORE_ENV: "integration_test"
-              backfill-mode: "incremental"
-              start-date: ""
-              end-date: ""
-              dry-run: "false"
+              backfill_mode: "incremental"
+              start_date: ""
+              end_date: ""
+              dry_run: "false"
 
         # 5. Assert SCD2 change detection + idempotency
         - task_key: assert_scd2_change
