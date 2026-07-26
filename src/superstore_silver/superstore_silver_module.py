@@ -510,7 +510,7 @@ def bronze_to_silver_prod(
             dq_df = add_error_columns(clean_df, business_columns, regex_cols, categorical_allowed_vals)
 
             # Business rule: ship_date should not be before order_date
-            # if "order_date" in business_columns and "ship_date" in business_columns:
+            if "order_date" in business_columns and "ship_date" in business_columns:
             #     date_formats = [
             #         "d/M/yyyy", 
             #         "dd-MM-yyyy",
@@ -526,28 +526,28 @@ def bronze_to_silver_prod(
             #             try_to_date(col(column_name), fmt)
             #             for fmt in date_formats
             #         ])
-            def parse_multi_format_date(column_name):
-                return coalesce(*[
-                    try_to_date(col(column_name), fmt)
-                    for fmt in DATE_FORMATS
-                ])
+                def parse_multi_format_date(column_name):
+                    return coalesce(*[
+                        try_to_date(col(column_name), fmt)
+                        for fmt in DATE_FORMATS
+                    ])
 
-            dq_df = dq_df.withColumn(
-                "order_date_dt",
-                parse_multi_format_date("order_date")
-            ).withColumn(
-                "ship_date_dt",
-                parse_multi_format_date("ship_date")
-            )
+                dq_df = dq_df.withColumn(
+                    "order_date_dt",
+                    parse_multi_format_date("order_date")
+                ).withColumn(
+                    "ship_date_dt",
+                    parse_multi_format_date("ship_date")
+                )
 
-            
-            dq_df = dq_df.withColumn(
-                "error_columns",
-                when(
-                    col("ship_date_dt") < col("order_date_dt"),
-                    array_union(col("error_columns"), array(lit("ship_date_before_order_date")))
-                ).otherwise(col("error_columns"))
-            )
+                
+                dq_df = dq_df.withColumn(
+                    "error_columns",
+                    when(
+                        col("ship_date_dt") < col("order_date_dt"),
+                        array_union(col("error_columns"), array(lit("ship_date_before_order_date")))
+                    ).otherwise(col("error_columns"))
+                )
                     
             
             # Set is_valid based on error_columns — extracted, unit-tested
