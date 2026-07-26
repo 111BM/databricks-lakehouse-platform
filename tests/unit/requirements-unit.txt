@@ -11,5 +11,6 @@
 pyspark==3.5.3        # local Spark session for DataFrame-based tests
 delta-spark==3.2.0    # gold modules import delta.tables.DeltaTable at module load
 pytz                  # superstore_logger imports pytz at module load
+pyyaml                # config-parsing tests read the silver/bronze YAML configs
 pytest
 pytest-cov            # provides --cov / --cov-report (coverage)
