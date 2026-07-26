@@ -19,16 +19,16 @@ resources:
 
       tasks:
         # 1. Seed dirty data into the isolated raw volume
-        - task_key: seed
+        - task_key: seed_initial_data 
           notebook_task:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/01_seed_integration_data
             source: WORKSPACE
           environment_key: integration_test_environment
 
         # 2. Run the REAL pipeline, routed to integration_test_* schemas
-        - task_key: run_pipeline
+        - task_key: run_pipeline_initial_load
           depends_on:
-            - task_key: seed
+            - task_key: seed_initial_data 
           run_job_task:
             job_id: ${resources.jobs.superstore_data_platform.id}
             job_parameters:
@@ -41,7 +41,7 @@ resources:
         # 3. Per-layer assertions (fan out from a single pipeline run)
         - task_key: assert_bronze
           depends_on:
-            - task_key: run_pipeline
+            - task_key: run_pipeline_initial_load
           notebook_task:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/bronze/assert_bronze
             source: WORKSPACE
@@ -51,7 +51,7 @@ resources:
 
         - task_key: assert_silver
           depends_on:
-            - task_key: run_pipeline
+            - task_key: run_pipeline_initial_load
           notebook_task:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/silver/assert_silver
             source: WORKSPACE
@@ -61,7 +61,7 @@ resources:
 
         - task_key: assert_gold_dim
           depends_on:
-            - task_key: run_pipeline
+            - task_key: run_pipeline_initial_load
           notebook_task:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/gold/assert_dim
             source: WORKSPACE
@@ -71,7 +71,7 @@ resources:
 
         - task_key: assert_gold_fact
           depends_on:
-            - task_key: run_pipeline
+            - task_key: run_pipeline_initial_load
           notebook_task:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/gold/assert_fact
             source: WORKSPACE
@@ -80,7 +80,7 @@ resources:
           environment_key: integration_test_environment
 
         # 4. Second incremental load: seed a changed + an unchanged customer
-        - task_key: seed_v2
+        - task_key: seed_changed_data
           depends_on:
             - task_key: assert_bronze
             - task_key: assert_silver
@@ -91,9 +91,9 @@ resources:
             source: WORKSPACE
           environment_key: integration_test_environment
 
-        - task_key: run_pipeline_2
+        - task_key: run_pipeline_incremental_load
           depends_on:
-            - task_key: seed_v2
+            - task_key: seed_changed_data
           run_job_task:
             job_id: ${resources.jobs.superstore_data_platform.id}
             job_parameters:
@@ -106,7 +106,7 @@ resources:
         # 5. Assert SCD2 change detection + idempotency
         - task_key: assert_scd2_change
           depends_on:
-            - task_key: run_pipeline_2
+            - task_key: run_pipeline_incremental_load
           notebook_task:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/gold/assert_scd2_change
             source: WORKSPACE
