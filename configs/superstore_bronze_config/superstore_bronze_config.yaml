@@ -122,21 +122,29 @@ bronze_entities:
 # -----------------------------
 # File Paths & Table Names (Configuration per Environment)
 # -----------------------------
+# source_listing_url points at a GitHub "contents" API folder listing. The
+# acquisition task lists it, compares against what is already in the landing
+# volume, and downloads only new files - so adding a dated file to the repo needs
+# no config change. integration_test deliberately has NO source_listing_url: the
+# seed owns that volume and a download would overwrite its controlled dataset.
 env_paths:
   dev:
     raw_source_file_path: "/Volumes/workspace/default/my_filestore_dev/raw/"
     schema_location: "/Volumes/workspace/default/my_filestore_dev/superstore_metadata/superstore_bronze_metadata/schema/"
     checkpoint_location: "/Volumes/workspace/default/my_filestore_dev/superstore_metadata/superstore_bronze_metadata/checkpoint/"
+    source_listing_url: "https://api.github.com/repos/111BM/Datasets/contents/superstore_data_platform/dev"
 
   qa:
     raw_source_file_path: "/Volumes/workspace/default/my_filestore_qa/raw/"
     schema_location: "/Volumes/workspace/default/my_filestore_qa/superstore_metadata/superstore_bronze_metadata/schema/"
     checkpoint_location: "/Volumes/workspace/default/my_filestore_qa/superstore_metadata/superstore_bronze_metadata/checkpoint/"
+    source_listing_url: "https://api.github.com/repos/111BM/Datasets/contents/superstore_data_platform/qa"
 
   prod:
     raw_source_file_path: "/Volumes/workspace/default/my_filestore_prod/raw/"
     schema_location: "/Volumes/workspace/default/my_filestore_prod/superstore_metadata/superstore_bronze_metadata/schema/"
     checkpoint_location: "/Volumes/workspace/default/my_filestore_prod/superstore_metadata/superstore_bronze_metadata/checkpoint/"
+    source_listing_url: "https://api.github.com/repos/111BM/Datasets/contents/superstore_data_platform/prod"
 
   # Isolated environment used ONLY by the automated integration test job.
   # Must match where 01_seed_integration_data writes the seed CSV.
