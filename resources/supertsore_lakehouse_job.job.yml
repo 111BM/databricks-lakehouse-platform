@@ -95,10 +95,20 @@ resources:
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
                 n_id}}"
             source: WORKSPACE
+        # Acquire source files from the external HTTP feed into the landing volume
+        # before Auto Loader runs. Skips itself in integration_test (seed owns that data).
+        - task_key: bronze_source_acquisition
+          depends_on:
+            - task_key: superstore_pipeline_master_run_id_init
+          notebook_task:
+            notebook_path: ${workspace.file_path}/src/superstore_bronze/bronze_source_acquisition
+            source: WORKSPACE
+          environment_key: superstore_bronze_layer_environment
         - task_key: superstore_bronze_layer
           depends_on:
             - task_key: superstore_pipeline_master_run_id_init
             - task_key: superstore_catalog_and_schemas_init
+            - task_key: bronze_source_acquisition
           notebook_task:
             notebook_path: ${workspace.file_path}/superstore_orchestrator/layer_orchestrator/superstore_bronze_layer_ETL_pipeline_orchestrator
             base_parameters:
