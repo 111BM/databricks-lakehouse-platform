@@ -4,7 +4,7 @@ An end-to-end **lakehouse data platform** on Databricks Serverless: Medallion Ar
 
 **What makes this project different from most portfolio pipelines:**
 
-- **Tested like production software** — 70+ unit tests against extracted pure functions, plus an end-to-end integration test that seeds dirty data, runs the *real* 17-task pipeline in an isolated environment, asserts every layer, verifies SCD2 change detection & idempotency across two loads, and always cleans up.
+- **Tested like production software** — 85+ unit tests against extracted pure functions, plus an end-to-end integration test that seeds dirty data, runs the *real* 18-task pipeline in an isolated environment, asserts every layer, verifies SCD2 change detection & idempotency across two loads, and always cleans up.
 - **Git is the single source of truth** — every notebook, module, and YAML config is deployed by the bundle (`${workspace.file_path}` paths + runtime-derived `BUNDLE_ROOT`); nothing is hand-synced to the workspace.
 - **Data quality as routing, not filtering** — invalid rows are quarantined with named rule violations (`error_columns`), duplicates are audited, and a reconciliation invariant guarantees `bronze == silver + quarantine + audit` (nothing silently lost).
 
@@ -57,6 +57,13 @@ The cause was a 7-format `coalesce(try_to_date(...))` where the actual source fo
 so every row paid for a failed parse first — 803 s → 158 s for the affected entity after
 reordering. Full write-up, including the measurement method and a deliberately deferred
 optimization: **[docs/PERFORMANCE_INVESTIGATION.md](docs/PERFORMANCE_INVESTIGATION.md)**.
+
+A follow-up pass addressed the reason that fix over-delivered: because Databricks Serverless
+forbids `cache()`/`persist()`, every Spark action replayed the whole Silver lineage, and the
+layer was triggering eleven of them per entity just to collect metrics. Collapsing those into
+two fused aggregations removed eight full-lineage scans per entity with no metric lost —
+verified numerically equivalent, runtime impact not yet measured:
+**[docs/SILVER_ACTION_COLLAPSE.md](docs/SILVER_ACTION_COLLAPSE.md)**.
 
 Runtime is now ~60% serverless task startup and ~40% data processing at 3M rows, scaling
 linearly — so task consolidation, not Spark tuning, is the next meaningful lever.
@@ -124,7 +131,7 @@ Workflows: [.github/workflows/deploy.yml](.github/workflows/deploy.yml), [unit-t
 ```
 databricks.yml                     # bundle: targets (dev/qa/prod), variables
 resources/
-  supertsore_lakehouse_job.job.yml # 17-task pipeline DAG + parameters + notifications
+  supertsore_lakehouse_job.job.yml # 18-task pipeline DAG + parameters + notifications
   integration_test_job.job.yml     # seed → pipeline → asserts → cleanup
 configs/                           # YAML: column contracts, DQ rules, env paths
 src/
