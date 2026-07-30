@@ -19,8 +19,13 @@ from datetime import datetime
 
 import pytest
 
-# Real production function (also called by superstore_silver_module.bronze_to_silver_prod)
-from superstore_silver_transformations import deduplicate_latest_wins
+# Real production functions. bronze_to_silver_prod calls classify_duplicates()
+# directly (so its metrics pass and both output branches share one window
+# evaluation); deduplicate_latest_wins() is the split wrapper over it.
+from superstore_silver_transformations import (
+    classify_duplicates,
+    deduplicate_latest_wins,
+)
 
 
 def _ts(day):
@@ -134,7 +139,7 @@ class TestDeduplicateLatestWins:
     def test_empty_dataframe(self, spark):
         # Edge case: empty input should return empty winners and losers.
         from pyspark.sql.types import StructType, StructField, StringType, TimestampType
-        
+
         schema = StructType([
             StructField("customer_id", StringType(), True),
             StructField("bronze_ingestion_ts", TimestampType(), True),
@@ -145,3 +150,120 @@ class TestDeduplicateLatestWins:
 
         assert winners.count() == 0
         assert losers.count() == 0
+
+
+@pytest.mark.unit
+class TestClassifyDuplicates:
+    """
+    classify_duplicates() is what bronze_to_silver_prod actually calls. It owns
+    the dedup window, and the Silver metrics pass derives deduplicated_rows,
+    duplicate_rows and the pre-dedup total from row_num in ONE aggregation
+    rather than counting the two branches separately (serverless forbids
+    cache()/persist(), so each extra count replays the whole lineage).
+
+    These tests pin the row_num contract that derivation depends on.
+    """
+
+    def test_row_num_ranks_latest_first(self, spark):
+        df = spark.createDataFrame(
+            [
+                ("A", "old", _ts(1)),
+                ("A", "new", _ts(3)),
+                ("A", "mid", _ts(2)),
+            ],
+            ["customer_id", "val", "bronze_ingestion_ts"],
+        )
+
+        by_val = {
+            r["val"]: r["row_num"]
+            for r in classify_duplicates(df, ["customer_id"]).collect()
+        }
+
+        assert by_val == {"new": 1, "mid": 2, "old": 3}
+
+    def test_winner_is_row_num_one_per_group(self, spark):
+        # Two groups -> exactly one row_num == 1 each.
+        df = spark.createDataFrame(
+            [
+                ("A", _ts(1)),
+                ("A", _ts(2)),
+                ("B", _ts(1)),
+            ],
+            ["customer_id", "bronze_ingestion_ts"],
+        )
+
+        classified = classify_duplicates(df, ["customer_id"])
+
+        assert classified.filter("row_num = 1").count() == 2  # one per key
+        assert classified.filter("row_num > 1").count() == 1
+
+    def test_split_is_exhaustive(self, spark):
+        """
+        THE INVARIANT the Silver metrics pass relies on: every row is either a
+        winner (row_num == 1) or a duplicate (row_num > 1), never neither and
+        never both. bronze_to_silver_prod derives its pre-dedup total as
+        deduplicated_rows + duplicate_rows, so a gap here would silently corrupt
+        the metrics table rather than fail loudly.
+        """
+        df = spark.createDataFrame(
+            [
+                ("A", _ts(1)), ("A", _ts(2)), ("A", _ts(3)),
+                ("B", _ts(1)),
+                ("C", _ts(1)), ("C", _ts(2)),
+            ],
+            ["customer_id", "bronze_ingestion_ts"],
+        )
+
+        classified = classify_duplicates(df, ["customer_id"])
+
+        winners = classified.filter("row_num = 1").count()
+        losers = classified.filter("row_num > 1").count()
+
+        assert winners == 3           # A, B, C
+        assert losers == 3            # 2 extra A + 1 extra C
+        assert winners + losers == 6  # == total rows in
+        assert classified.filter("row_num IS NULL").count() == 0
+
+    def test_row_num_is_never_null(self, spark):
+        # row_number() is 1-based and total, even for single-row groups.
+        df = spark.createDataFrame(
+            [("solo", _ts(1))], ["customer_id", "bronze_ingestion_ts"]
+        )
+
+        classified = classify_duplicates(df, ["customer_id"])
+
+        assert classified.first()["row_num"] == 1
+
+    def test_agrees_with_deduplicate_latest_wins(self, spark):
+        # The wrapper must stay a pure split of the classified frame -- if these
+        # ever diverge, the unit tests above stop protecting production.
+        df = spark.createDataFrame(
+            [
+                ("A", "old", _ts(1)),
+                ("A", "new", _ts(2)),
+                ("B", "only", _ts(1)),
+            ],
+            ["customer_id", "val", "bronze_ingestion_ts"],
+        )
+
+        classified = classify_duplicates(df, ["customer_id"])
+        winners, losers = deduplicate_latest_wins(df, ["customer_id"])
+
+        assert winners.count() == classified.filter("row_num = 1").count()
+        assert losers.count() == classified.filter("row_num > 1").count()
+        assert sorted(r["val"] for r in winners.collect()) == ["new", "only"]
+
+    def test_composite_key_row_num(self, spark):
+        df = spark.createDataFrame(
+            [
+                ("O1", "P1", _ts(1)),
+                ("O1", "P1", _ts(2)),
+                ("O1", "P2", _ts(1)),
+            ],
+            ["order_id", "product_id", "bronze_ingestion_ts"],
+        )
+
+        classified = classify_duplicates(df, ["order_id", "product_id"])
+
+        assert classified.filter("row_num = 1").count() == 2
+        assert classified.filter("row_num > 1").count() == 1

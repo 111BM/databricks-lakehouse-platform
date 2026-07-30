@@ -109,7 +109,8 @@ from pyspark.sql import DataFrame, Row  # DataFrame typing and Row object for st
 from pyspark.sql.functions import (
     col, trim, regexp_replace, sha2, concat_ws, current_timestamp,  # data cleaning & hashing
     row_number, to_date, coalesce, max as spark_max, lit, try_to_date,          # windowing, casting, aggregation helpers
-    spark_partition_id, when, expr, size, array, array_union        # partition tracking, conditional logic, array ops
+    spark_partition_id, when, expr, size, array, array_union,       # partition tracking, conditional logic, array ops
+    count as spark_count, sum as spark_sum                          # aliased: keep builtin count()/sum() usable
 )
 
 # -----------------------------
@@ -165,7 +166,7 @@ from superstore_logger import get_superstore_logger, log_event          # Custom
 from superstore_platform_constants import SILVER_LAYER                  # Layer constant for Silver pipeline
 from superstore_backfill_utils import get_incremental_with_backfill     # backfill support
 from superstore_silver_transformations import (                                    # pure logic (unit-tested)
-    deduplicate_latest_wins,
+    classify_duplicates,
     row_hash,
     clean_string_columns,
     add_error_columns,
@@ -454,15 +455,12 @@ def bronze_to_silver_prod(
             
         else:
             # Case 2: DataFrame has rows
-            read_rows = df.count()  # Get the total number of rows for logging
-            log_event(logger_silver, 
-                    "INFO", "Total new rows in Bronze table", 
-                    table=bronze_table, 
-                    read_rows=read_rows,
-                    master_run_id=master_run_id,
-                    layer_run_id=layer_run_id,
-                    layer=SILVER_LAYER
-                )
+            #
+            # read_rows is NOT counted here. Every Spark action on this lineage
+            # replays it in full (clean -> DQ -> multi-format date parse) because
+            # serverless forbids cache()/persist(), so a standalone count() costs a
+            # whole pass. It is derived for free from the is_valid split in Step 4
+            # instead: read_rows = good_count + dirty_count.
 
             # Separate business and metadata columns
             business_cols = [c for c in business_columns if c in df.columns]
@@ -568,13 +566,30 @@ def bronze_to_silver_prod(
             good_rows_df = dq_df.filter(col("is_valid") == True)
             dirty_rows_df = dq_df.filter(col("is_valid") == False)
 
-            good_count=good_rows_df.count()
-            dirty_count=dirty_rows_df.count()
-            # invalid_numeric_count=invalid_numeric_df.count()
+            # ONE pass for both counts instead of three.
+            #
+            # Counting good_rows_df and dirty_rows_df separately replayed the entire
+            # lineage twice, and read_rows above paid for it a third time. A single
+            # groupBy on is_valid gets all three numbers in one pass.
+            #
+            # Exhaustiveness: add_is_valid() derives is_valid from
+            # size(filter(error_columns, x -> x is not null)) == 0. error_columns is
+            # always a non-null array (add_error_columns builds it with array(...)),
+            # so size() never returns null and is_valid is strictly True/False --
+            # the two buckets partition the frame and their sum is read_rows.
+            valid_counts = {
+                row["is_valid"]: row["count"]
+                for row in dq_df.groupBy("is_valid").count().collect()
+            }
+            good_count = valid_counts.get(True, 0)
+            dirty_count = valid_counts.get(False, 0)
+            read_rows = good_count + dirty_count
 
-            log_event(logger_silver, 
-                    "INFO", "Bronze to Silver row counts", 
-                    table=bronze_table, good_rows=good_count, 
+            log_event(logger_silver,
+                    "INFO", "Bronze to Silver row counts",
+                    table=bronze_table,
+                    read_rows=read_rows,
+                    good_rows=good_count,
                     dirty_rows=dirty_count,
                     master_run_id=master_run_id,
                     layer_run_id=layer_run_id,
@@ -585,7 +600,7 @@ def bronze_to_silver_prod(
             # -------------------------------
             # Step 5: Quarantine dirty rows
             # -------------------------------
-            if dirty_rows_df.head(1):  # Proceed only if there are dirty rows
+            if dirty_count > 0:  # Proceed only if there are dirty rows (already counted above)
                 # Generate a SHA-256 hash for each dirty row based on its full content
                 # The hash ensures uniqueness for quarantine table purposes
                 dirty_selected_cols = [*business_columns, *meta_columns, "error_columns", "is_valid"]
@@ -689,47 +704,70 @@ def bronze_to_silver_prod(
             # -----------------------------
             throughput_rows_per_sec = round(read_rows / max(int(time.time() - start_time_epoch), 1),2)
 
-            # -----------------------------
-            # Skew Calculation (Serverless safe)
-            # -----------------------------
-            try:
-                partition_counts = (
-                    silver_cast_df.withColumn("partition_id", spark_partition_id())
-                    .groupBy("partition_id")
-                    .count()
-                    .collect()
-                )
-
-                counts = [row["count"] for row in partition_counts]
-
-                if counts:
-                    max_partition_rows = max(counts)
-                    avg_partition_rows = sum(counts) / len(counts)
-                    skew_ratio = round(max_partition_rows / avg_partition_rows, 2)
-                else:
-                    skew_ratio = 0.0
-
-            except Exception:
-                skew_ratio = 0.0
-            
+            # (Skew is no longer computed here -- it is folded into the single
+            # Step 7 metrics pass below, which already has to scan this data.)
 
             # -------------------------------
             # Step 7: Deduplication & audit
             # -------------------------------
             # Deduplication: keep only the latest record per business key.
-            # Logic extracted to deduplicate_latest_wins() so it can be unit tested.
+            # Logic extracted to classify_duplicates() so it can be unit tested.
             silver_df = silver_cast_df.repartition(shuffle_partitions, *business_keys)  # Repartition by business keys
 
-            silver_dedup_df, silver_dup_df = deduplicate_latest_wins(
+            # classify_duplicates() attaches row_num once; the metrics pass and BOTH
+            # output branches below are derived from that same frame, so the dedup
+            # window is expressed once rather than per-branch.
+            classified_df = classify_duplicates(
                 silver_df,
                 business_keys=business_keys,
                 order_col="bronze_ingestion_ts",
             )
-            
+
+            # -----------------------------
+            # Step 7 metrics: ONE pass for total / dedup / duplicate / skew
+            # -----------------------------
+            # This replaces five separate passes: the skew collect() above, plus
+            # dedup_rows, total, dedups_count and dups_count which were each counted
+            # individually further down. Grouping by partition id yields the row
+            # counts and the skew distribution in the same aggregation.
+            #
+            # NOTE: skew is now measured AFTER the repartition by business_keys;
+            # previously it was measured on silver_cast_df, before it. This is the
+            # skew the dedup window actually experiences, so a hot business key now
+            # shows up -- the old placement could only see the bronze read layout.
+            #
+            # This aggregation is load-bearing (the merge branches below gate on its
+            # counts), so unlike the old skew block it is deliberately NOT wrapped in
+            # a try/except that swallows failures -- a failure here must fail the ETL.
+            partition_stats = (
+                classified_df.groupBy(spark_partition_id().alias("_partition_id"))
+                .agg(
+                    spark_count(lit(1)).alias("row_count"),
+                    spark_sum(when(col("row_num") == 1, 1).otherwise(0)).alias("winner_count"),
+                    spark_sum(when(col("row_num") > 1, 1).otherwise(0)).alias("loser_count"),
+                )
+                .collect()
+            )
+
+            total = sum(row["row_count"] for row in partition_stats)          # pre-dedup rows
+            dedups_count = sum(row["winner_count"] for row in partition_stats)  # latest-wins keepers
+            dups_count = sum(row["loser_count"] for row in partition_stats)     # audit-bound losers
+
+            counts = [row["row_count"] for row in partition_stats]
+            if counts:
+                avg_partition_rows = sum(counts) / len(counts)
+                skew_ratio = builtins.round(max(counts) / avg_partition_rows, 2)
+            else:
+                skew_ratio = 0.0
+
+            # Winners / losers split from the SAME classified frame.
+            silver_dedup_df = classified_df.filter(col("row_num") == 1).drop("row_num")
+            silver_dup_df = classified_df.filter(col("row_num") > 1).drop("row_num")
+
             # -------------------------------
             # Step 7a: Merge into Silver
             # -------------------------------
-            has_dedup_rows = silver_dedup_df.limit(1).count() > 0
+            has_dedup_rows = dedups_count > 0  # from the Step 7 metrics pass; no extra scan
             if not has_dedup_rows:
                 log_event(logger_silver, "INFO", "No de_dups rows received; skipping de_dups silver merge",table=silver_table, master_run_id=master_run_id, layer_run_id=layer_run_id,layer=SILVER_LAYER)
             else:
@@ -755,8 +793,10 @@ def bronze_to_silver_prod(
                     # Repartition by the hash column for more efficient processing
                     silver_dedup_df = silver_dedup_df.repartition(shuffle_partitions, col(silver_col))
 
-                    # Track the count of rows dedups rows before merge
-                    dedup_rows = silver_dedup_df.count()
+                    # Track the count of rows dedups rows before merge.
+                    # Already known from the Step 7 metrics pass -- the select/hash/
+                    # repartition above are row-preserving, so no re-count is needed.
+                    dedup_rows = dedups_count
 
                     # -----------------------------
                     # Determine Gold table load state
@@ -853,7 +893,7 @@ def bronze_to_silver_prod(
             # -------------------------------
             # Step 7b: Merge duplicates into audit
             #-------------------------------
-            has_dup_rows = silver_dup_df.limit(1).count() > 0
+            has_dup_rows = dups_count > 0  # from the Step 7 metrics pass; no extra scan
             if not has_dup_rows:
                 log_event(logger_silver, "INFO", "No dups rows received; skipping dups silver merge", table=silver_table, master_run_id=master_run_id, layer_run_id=layer_run_id, layer=SILVER_LAYER)
             else:
@@ -916,9 +956,9 @@ def bronze_to_silver_prod(
             # -------------------------------
             # Step 8: Metrics
             # -------------------------------
-            total = silver_df.count()  # Total rows read in Silver
-            dedups_count = silver_dedup_df.count()  # Deduplicated rows count
-            dups_count = silver_dup_df.count()  # Duplicate rows count
+            # total / dedups_count / dups_count all came from the single Step 7
+            # metrics pass -- re-counting them here cost three more full replays of
+            # the lineage for numbers that were already known.
             dedup_pct = builtins.round((dedups_count / total) * 100, 2) if total > 0 else 0
             dup_pct = builtins.round((dups_count / total) * 100, 2) if total > 0 else 0
 
