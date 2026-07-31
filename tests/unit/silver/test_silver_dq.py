@@ -230,3 +230,57 @@ class TestDataQualityRouting:
 
         assert validated.filter(col("is_valid") == True).count() == 1
         assert validated.filter(col("is_valid") == False).count() == 2
+
+    def test_is_valid_is_never_null_so_the_split_is_exhaustive(self, spark):
+        """
+        THE INVARIANT bronze_to_silver_prod relies on: is_valid is strictly
+        True/False, so grouping by it partitions the frame and read_rows can be
+        derived as good_count + dirty_count instead of costing its own count()
+        pass (serverless forbids cache()/persist(), so every extra action
+        replays the whole clean -> DQ -> date-parse lineage).
+
+        add_is_valid computes size(filter(error_columns, x -> x is not null)) == 0.
+        error_columns is always a non-null array, so size() never returns null.
+        A row that is neither valid nor invalid would silently under-report
+        read_rows in the metrics table rather than fail.
+        """
+        from pyspark.sql.types import StructType, StructField, StringType
+        schema = StructType([
+            StructField("customer_id", StringType(), True),
+            StructField("segment", StringType(), True),
+        ])
+        # Deliberately mixes clean rows, null keys, bad categoricals and an
+        # all-null row -- the most likely source of a null is_valid.
+        df = spark.createDataFrame([
+            ("CG-12520", "Consumer"),
+            (None, "Consumer"),
+            ("AA-10480", "NotASegment"),
+            (None, None),
+        ], schema)
+
+        validated = self._validate(
+            df, ["customer_id", "segment"],
+            categorical_allowed_vals={"segment": ["Consumer", "Corporate", "Home Office"]},
+        )
+
+        good = validated.filter(col("is_valid") == True).count()
+        dirty = validated.filter(col("is_valid") == False).count()
+
+        assert validated.filter(col("is_valid").isNull()).count() == 0
+        assert good + dirty == 4  # == total rows in; no row falls through
+
+    def test_all_clean_rows_still_yield_a_countable_split(self, spark):
+        # Edge case for the derivation: when nothing is dirty, the groupBy returns
+        # a single bucket and dirty_count must fall back to 0, not KeyError.
+        from pyspark.sql.types import StructType, StructField, StringType
+        schema = StructType([StructField("customer_id", StringType(), True)])
+        df = spark.createDataFrame([("A",), ("B",)], schema)
+
+        validated = self._validate(df, ["customer_id"])
+        buckets = {
+            r["is_valid"]: r["count"]
+            for r in validated.groupBy("is_valid").count().collect()
+        }
+
+        assert buckets.get(True, 0) == 2
+        assert buckets.get(False, 0) == 0

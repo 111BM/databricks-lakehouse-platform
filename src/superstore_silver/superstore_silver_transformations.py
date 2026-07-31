@@ -151,6 +151,37 @@ def row_hash(columns: list, sep: str = "||") -> Column:
     return sha2(concat_ws(sep, *[coalesce(col(c), lit("")) for c in columns]), 256)
 
 
+def classify_duplicates(
+    df: DataFrame,
+    business_keys: list,
+    order_col: str = "bronze_ingestion_ts",
+) -> DataFrame:
+    """
+    Attach a "row_num" column ranking rows within each `business_keys` group,
+    most recent `order_col` first. row_num == 1 is the winner (latest record
+    wins); row_num > 1 are duplicates destined for the audit table.
+
+    This is the single source of truth for the dedup window.
+    `deduplicate_latest_wins` splits on it, and `bronze_to_silver_prod` calls
+    it directly so that the metrics aggregation and both output branches share
+    one evaluation of the window instead of re-deriving it. Serverless forbids
+    cache()/persist(), so re-deriving would mean replaying the whole upstream
+    lineage.
+
+    Args:
+        df: Input DataFrame (already cleaned/validated).
+        business_keys: Columns identifying a logical record.
+        order_col: Timestamp column; highest value wins. Default
+                   "bronze_ingestion_ts".
+
+    Returns:
+        The input DataFrame plus a "row_num" integer column.
+    """
+    window_spec = Window.partitionBy(*business_keys).orderBy(col(order_col).desc())
+
+    return df.withColumn("row_num", row_number().over(window_spec))
+
+
 def deduplicate_latest_wins(
     df: DataFrame,
     business_keys: list,
@@ -163,8 +194,7 @@ def deduplicate_latest_wins(
     `order_col` wins (latest record wins). All other rows in the group are
     losers (duplicates) routed to the audit table.
 
-    This is the exact logic `bronze_to_silver_prod` uses for its
-    Window + row_number() deduplication, extracted so it can be tested.
+    Thin wrapper over `classify_duplicates` (which owns the window logic).
 
     Args:
         df: Input DataFrame (already cleaned/validated).
@@ -176,9 +206,7 @@ def deduplicate_latest_wins(
         (winners_df, losers_df) tuple. Neither contains the helper
         "row_num" column.
     """
-    window_spec = Window.partitionBy(*business_keys).orderBy(col(order_col).desc())
-
-    classified = df.withColumn("row_num", row_number().over(window_spec))
+    classified = classify_duplicates(df, business_keys, order_col)
 
     winners = classified.filter(col("row_num") == 1).drop("row_num")
     losers = classified.filter(col("row_num") > 1).drop("row_num")
