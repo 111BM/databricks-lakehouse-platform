@@ -6,7 +6,7 @@ bundle:
   uuid: 1e5129cf-522e-4d2a-a430-8c5928f2dbbe
 
 include:
-  - resources/supertsore_lakehouse_job.job.yml
+  - resources/superstore_lakehouse_job.job.yml
   - resources/integration_test_job.job.yml
 
 # Variable declarations. These variables are assigned in the dev/prod targets below.
