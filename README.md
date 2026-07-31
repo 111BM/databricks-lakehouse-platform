@@ -131,7 +131,7 @@ Workflows: [.github/workflows/deploy.yml](.github/workflows/deploy.yml), [unit-t
 ```
 databricks.yml                     # bundle: targets (dev/qa/prod), variables
 resources/
-  supertsore_lakehouse_job.job.yml # 18-task pipeline DAG + parameters + notifications
+  superstore_lakehouse_job.job.yml # 18-task pipeline DAG + parameters + notifications
   integration_test_job.job.yml     # seed → pipeline → asserts → cleanup
 configs/                           # YAML: column contracts, DQ rules, env paths
 src/

@@ -462,7 +462,7 @@ backfill_config = get_backfill_config(dbutils, allow_full_refresh=False)
 
 #### 5.1. Add Backfill Parameters to Job
 
-**File:** `resources/supertsore_lakehouse_job.job.yml`
+**File:** `resources/superstore_lakehouse_job.job.yml`
 
 **Add parameters to EACH task** (Bronze, Silver, Gold):
 
@@ -652,7 +652,7 @@ databricks jobs run-now --job-id <job_id> \
 
 **Option 2: Skip Bronze in dependencies**
 
-Temporarily modify `supertsore_lakehouse_job.job.yml`:
+Temporarily modify `superstore_lakehouse_job.job.yml`:
 ```yaml
 - task_key: superstore_silver_layer
   depends_on:
@@ -937,7 +937,7 @@ Use this checklist to track your progress:
 - [ ] Tested Bronze backfill in dev
 
 ### **Job Configuration**
-- [ ] Updated `supertsore_lakehouse_job.job.yml`:
+- [ ] Updated `superstore_lakehouse_job.job.yml`:
   - [ ] Added parameters to all tasks
 - [ ] Updated `databricks.yml`:
   - [ ] Added backfill variables
