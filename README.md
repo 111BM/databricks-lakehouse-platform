@@ -35,7 +35,7 @@ flowchart TD
         QUAR["Quarantine<br/>per-entity _dirty tables"]
         GOOD[Valid Rows]
         AUD["Audit<br/>per-entity_duplicates tables"]
-        SLV["Silver<br/>per-entity_de-duplicates tables"]
+        SLV["Silver<br/>customers · products · orders · sales"]
         DQ -->|Invalid rows| QUAR
         DQ -->|Valid rows| GOOD
         GOOD -->|Duplicate losers| AUD
@@ -67,7 +67,7 @@ flowchart TD
     MARTS -->|Built on marts| KPI
     MARTS -->|Reports / Dashboards| BI[BI Consumption]
     KPI -->|Metrics & Alerts| BI
-    MLF -->|ML Models| MLC[Machine Learning]
+    MLF -.->|Feature tables ready for<br/>model training, not in this repo| MLC[Machine Learning]
 ```
 
 ### Layers
