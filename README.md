@@ -14,7 +14,8 @@ An end-to-end **lakehouse data platform** on Databricks Serverless: Medallion Ar
 
 ```mermaid
 flowchart LR
-    RAW[Raw CSV<br/>Volume] -->|Auto Loader<br/>incremental| B[Bronze<br/>raw + entities]
+    SRC[Source feed<br/>GitHub Datasets repo] -->|Contents API<br/>new files only| RAW[Raw CSV<br/>Volume]
+    RAW -->|Auto Loader<br/>incremental| B[Bronze<br/>raw + entities]
     B -->|dedup, DQ rules,<br/>hashing| S[Silver<br/>clean entities]
     S -->|SCD2 merge| GD[Gold<br/>dimensions]
     S -->|incremental append| GF[Gold<br/>facts]
@@ -31,6 +32,7 @@ flowchart LR
 
 | Layer | Modules | What it does |
 |---|---|---|
+| **Acquisition** | `bronze_source_acquisition` | Pulls new source files from an external HTTP feed (GitHub Contents API) into the environment's landing volume, standing in for a vendor drop. Idempotent by construction — downloads the set difference between the source listing and what has already landed, so re-runs land nothing. Each env reads its own source folder; `integration_test` has no source configured and skips, since its data comes from the seed |
 | **Bronze** | `bronze_ingest_superstore_module_01`, `bronze_entity_superstore_module_02` | Auto Loader (`cloudFiles`) incremental CSV ingest into a one-big-table `superstore_raw` with metadata enrichment (source file, ingestion ts), then splits into entity tables (customers, products, orders, sales) preserving row counts and provenance |
 | **Silver** | `superstore_silver_module` + `superstore_silver_transformations` (pure functions) | Cleansing, null-business-key / regex / categorical / business-rule validation with **quarantine routing**, latest-wins deduplication with **audit trail**, SHA-256 row hashing, Delta MERGE upserts |
 | **Gold** | `superstore_gold_dimension_framework`, `superstore_gold_facts_framework` | Config-driven **SCD2 dimensions** (one current row per key, closed validity ranges, no overlaps) and incremental fact tables with referential integrity to dimensions |
@@ -192,6 +194,8 @@ Gaps I'm aware of and would close before running this at real scale — kept her
 ## Dataset
 
 The classic [Superstore retail dataset](https://www.kaggle.com/datasets/vivek468/superstore-dataset-final) (orders, customers, products, sales) — small by design so the platform patterns (not data volume) are the point. The integration test uses a synthetic 7-row seed engineered to trip every DQ rule.
+
+Source files are served from a separate repo, [`111BM/Datasets`](https://github.com/111BM/Datasets), under one folder per environment (`dev` / `qa` / `prod`). That repo plays the role of a vendor's file drop: dropping a new CSV into a folder is all it takes for the next run to pick it up — no config change, no code change. `bronze_source_acquisition` reads the folder listing over the GitHub Contents API and downloads only files the landing volume does not already have.
 
 ## Author
 
