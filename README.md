@@ -13,17 +13,61 @@ An end-to-end **lakehouse data platform** on Databricks Serverless: Medallion Ar
 ## Architecture
 
 ```mermaid
-flowchart LR
-    SRC[Source feed<br/>GitHub Datasets repo] -->|Contents API<br/>new files only| RAW[Raw CSV<br/>Volume]
-    RAW -->|Auto Loader<br/>incremental| B[Bronze<br/>raw + entities]
-    B -->|dedup, DQ rules,<br/>hashing| S[Silver<br/>clean entities]
-    S -->|SCD2 merge| GD[Gold<br/>dimensions]
-    S -->|incremental append| GF[Gold<br/>facts]
-    GD --> M[Marts &<br/>Features]
-    GF --> M
-    M --> K[KPI / Semantic<br/>views]
-    S -.->|invalid rows| Q[Quarantine]
-    S -.->|duplicate losers| A[Audit]
+flowchart TD
+    subgraph ACQ[Acquisition]
+        SRC[Source feed<br/>GitHub Datasets repo]
+        VOL[Raw CSV<br/>landing volume]
+        SRC -->|Contents API<br/>new files only| VOL
+    end
+
+    subgraph BRONZE[Bronze Layer]
+        ING[01 - Raw Ingestion]
+        RAW[superstore_raw]
+        SPLIT[02 - Entity Split]
+        ENT[superstore_entity_bronze]
+        ING -->|Write to superstore_raw| RAW
+        RAW --> SPLIT
+        SPLIT -->|Write to superstore_entity_bronze| ENT
+    end
+
+    subgraph SILVER[Silver Layer]
+        DQ[Data Quality Check]
+        QUAR[Quarantine Table]
+        GOOD[Good Rows]
+        AUD["Duplicate Rows to Audit Table"]
+        SLV[superstore_silver]
+        DQ -->|Dirty Rows| QUAR
+        DQ -->|Good Rows| GOOD
+        GOOD -->|Deduplication| AUD
+        AUD -->|Deduplicated Rows| SLV
+    end
+
+    subgraph GOLD[Gold Layer]
+        DIM[SCD2 Dimensions]
+        FCT[Fact Tables]
+    end
+
+    subgraph SEM[Semantic Layer]
+        MARTS[Marts / Aggregations for BI]
+        KPI[KPI Views / Metrics]
+    end
+
+    subgraph FEAT[Feature Layer]
+        MLF[ML Feature Engineering]
+    end
+
+    VOL -->|Auto Loader<br/>incremental| ING
+    ENT -->|Apply Data Quality Checks| DQ
+    SLV -->|SCD2 MERGE| DIM
+    SLV -->|Incremental append| FCT
+    DIM --> MARTS
+    FCT --> MARTS
+    DIM --> KPI
+    FCT --> KPI
+    FCT --> MLF
+    MARTS -->|Reports / Dashboards| BI[BI Consumption]
+    KPI -->|Metrics & Alerts| BI
+    MLF -->|ML Models| MLC[Machine Learning]
 ```
 
 <img width="509" height="474" alt="Data flow lifecycle" src="https://github.com/user-attachments/assets/4d69de79-8bfb-4cbb-aca2-c16f2ca06da0" />
