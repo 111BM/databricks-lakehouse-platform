@@ -4,7 +4,7 @@ An end-to-end **lakehouse data platform** on Databricks Serverless: Medallion Ar
 
 **What makes this project different from most portfolio pipelines:**
 
-- **Tested like production software** — 85+ unit tests against extracted pure functions, plus an end-to-end integration test that seeds dirty data, runs the *real* 18-task pipeline in an isolated environment, asserts every layer, verifies SCD2 change detection & idempotency across two loads, and always cleans up.
+- **Tested like production software** — 87 unit tests against extracted pure functions, plus an end-to-end integration test that seeds dirty data, runs the *real* 18-task pipeline in an isolated environment, asserts every layer, verifies SCD2 change detection & idempotency across two loads, and always cleans up.
 - **Git is the single source of truth** — every notebook, module, and YAML config is deployed by the bundle (`${workspace.file_path}` paths + runtime-derived `BUNDLE_ROOT`); nothing is hand-synced to the workspace.
 - **Data quality as routing, not filtering** — invalid rows are quarantined with named rule violations (`error_columns`), duplicates are audited, and a reconciliation invariant guarantees `bronze == silver + quarantine + audit` (nothing silently lost).
 
@@ -13,24 +13,68 @@ An end-to-end **lakehouse data platform** on Databricks Serverless: Medallion Ar
 ## Architecture
 
 ```mermaid
-flowchart LR
-    RAW[Raw CSV<br/>Volume] -->|Auto Loader<br/>incremental| B[Bronze<br/>raw + entities]
-    B -->|dedup, DQ rules,<br/>hashing| S[Silver<br/>clean entities]
-    S -->|SCD2 merge| GD[Gold<br/>dimensions]
-    S -->|incremental append| GF[Gold<br/>facts]
-    GD --> M[Marts &<br/>Features]
-    GF --> M
-    M --> K[KPI / Semantic<br/>views]
-    S -.->|invalid rows| Q[Quarantine]
-    S -.->|duplicate losers| A[Audit]
-```
+flowchart TD
+    subgraph ACQ[Acquisition]
+        SRC[Source feed<br/>GitHub Datasets repo]
+        VOL[Raw CSV<br/>landing volume]
+        SRC -->|Contents API<br/>new files only| VOL
+    end
 
-<img width="509" height="474" alt="Data flow lifecycle" src="https://github.com/user-attachments/assets/4d69de79-8bfb-4cbb-aca2-c16f2ca06da0" />
+    subgraph BRONZE[Bronze Layer]
+        ING[01 - Raw Ingestion]
+        RAW["superstore_raw<br/>one big table"]
+        SPLIT[02 - Entity Split]
+        ENT["customers · products<br/>orders · sales"]
+        ING -->|Write to<br/>superstore_raw| RAW
+        RAW --> SPLIT
+        SPLIT -->|Four entity tables| ENT
+    end
+
+    subgraph SILVER[Silver Layer]
+        DQ[Data Quality Check]
+        QUAR["Quarantine<br/>per-entity<br/>_dirty tables"]
+        GOOD[Valid Rows]
+        AUD["Audit<br/>per-entity<br/>_duplicates tables"]
+        SLV["Silver<br/>customers · products<br/>orders · sales"]
+        DQ -->|Invalid rows| QUAR
+        DQ -->|Valid rows| GOOD
+        GOOD -->|Duplicate losers| AUD
+        GOOD -->|Latest wins,<br/>SHA-256 hash| SLV
+    end
+
+    subgraph GOLD[Gold Layer]
+        DIM["Dimensions-Tables"]
+        FCT["Fact-Tables"]
+    end
+
+    subgraph SEM[Semantic Layer]
+        MARTS["Marts / Aggregations<br/>for BI"]
+        KPI["KPI Views<br/>Metrics"]
+    end
+
+    subgraph FEAT[Feature Layer]
+        MLF["ML Feature<br/>Engineering"]
+    end
+
+    VOL -->|Auto Loader<br/>incremental| ING
+    ENT -->|Transformations| DQ
+    SLV -->|SCD2 MERGE| DIM
+    SLV -->|Incremental append| FCT
+    DIM --> MARTS
+    FCT --> MARTS
+    DIM --> MLF
+    FCT --> MLF
+    MARTS -->|Built on marts| KPI
+    MARTS -->|Reports / Dashboards| BI[BI Consumption]
+    KPI -->|Metrics & Alerts| BI
+    MLF -.->|Model training<br/>not in this repo| MLC[Machine Learning]
+```
 
 ### Layers
 
 | Layer | Modules | What it does |
 |---|---|---|
+| **Acquisition** | `bronze_source_acquisition` | Pulls new source files from an external HTTP feed (GitHub Contents API) into the environment's landing volume, standing in for a vendor drop. Idempotent by construction — downloads the set difference between the source listing and what has already landed, so re-runs land nothing. Each env reads its own source folder; `integration_test` has no source configured and skips, since its data comes from the seed |
 | **Bronze** | `bronze_ingest_superstore_module_01`, `bronze_entity_superstore_module_02` | Auto Loader (`cloudFiles`) incremental CSV ingest into a one-big-table `superstore_raw` with metadata enrichment (source file, ingestion ts), then splits into entity tables (customers, products, orders, sales) preserving row counts and provenance |
 | **Silver** | `superstore_silver_module` + `superstore_silver_transformations` (pure functions) | Cleansing, null-business-key / regex / categorical / business-rule validation with **quarantine routing**, latest-wins deduplication with **audit trail**, SHA-256 row hashing, Delta MERGE upserts |
 | **Gold** | `superstore_gold_dimension_framework`, `superstore_gold_facts_framework` | Config-driven **SCD2 dimensions** (one current row per key, closed validity ranges, no overlaps) and incremental fact tables with referential integrity to dimensions |
@@ -102,7 +146,7 @@ Everything runs against isolated `integration_test_*` schemas and a dedicated vo
 
 ![Integration test job DAG on Databricks Serverless](docs/images/integration_tests_DAG.png)
 
-*The `superstore_integration_test` job: the real pipeline run twice (initial load, then an SCD2 change), asserting every layer in between and always cleaning up — end to end in ~23 min on serverless.*
+*The `superstore_integration_test` job: the real pipeline run twice (initial load, then an SCD2 change), asserting every layer in between and always cleaning up — end to end in ~22 min on serverless.*
 
 ```bash
 databricks bundle run superstore_integration_test --target qa
@@ -192,6 +236,8 @@ Gaps I'm aware of and would close before running this at real scale — kept her
 ## Dataset
 
 The classic [Superstore retail dataset](https://www.kaggle.com/datasets/vivek468/superstore-dataset-final) (orders, customers, products, sales) — small by design so the platform patterns (not data volume) are the point. The integration test uses a synthetic 7-row seed engineered to trip every DQ rule.
+
+Source files are served from a separate repo, [`111BM/Datasets`](https://github.com/111BM/Datasets), under one folder per environment (`dev` / `qa` / `prod`). That repo plays the role of a vendor's file drop: dropping a new CSV into a folder is all it takes for the next run to pick it up — no config change, no code change. `bronze_source_acquisition` reads the folder listing over the GitHub Contents API and downloads only files the landing volume does not already have.
 
 ## Author
 
