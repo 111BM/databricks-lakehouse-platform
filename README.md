@@ -25,21 +25,21 @@ flowchart TD
         RAW["superstore_raw<br/>one big table"]
         SPLIT[02 - Entity Split]
         ENT["customers · products<br/>orders · sales"]
-        ING -->|Write to superstore_raw| RAW
+        ING -->|Write to<br/>superstore_raw| RAW
         RAW --> SPLIT
         SPLIT -->|Four entity tables| ENT
     end
 
     subgraph SILVER[Silver Layer]
         DQ[Data Quality Check]
-        QUAR["Quarantine<br/>per-entity _dirty tables"]
+        QUAR["Quarantine<br/>per-entity<br/>_dirty tables"]
         GOOD[Valid Rows]
-        AUD["Audit<br/>per-entity_duplicates tables"]
-        SLV["Silver<br/>customers · products · orders · sales"]
+        AUD["Audit<br/>per-entity<br/>_duplicates tables"]
+        SLV["Silver<br/>customers · products<br/>orders · sales"]
         DQ -->|Invalid rows| QUAR
         DQ -->|Valid rows| GOOD
         GOOD -->|Duplicate losers| AUD
-        GOOD -->|Latest wins, SHA-256 hash| SLV
+        GOOD -->|Latest wins,<br/>SHA-256 hash| SLV
     end
 
     subgraph GOLD[Gold Layer]
@@ -48,12 +48,12 @@ flowchart TD
     end
 
     subgraph SEM[Semantic Layer]
-        MARTS[Marts / Aggregations for BI]
-        KPI[KPI Views / Metrics]
+        MARTS["Marts / Aggregations<br/>for BI"]
+        KPI["KPI Views<br/>Metrics"]
     end
 
     subgraph FEAT[Feature Layer]
-        MLF[ML Feature Engineering]
+        MLF["ML Feature<br/>Engineering"]
     end
 
     VOL -->|Auto Loader<br/>incremental| ING
@@ -67,7 +67,7 @@ flowchart TD
     MARTS -->|Built on marts| KPI
     MARTS -->|Reports / Dashboards| BI[BI Consumption]
     KPI -->|Metrics & Alerts| BI
-    MLF -.->|Feature tables ready for<br/>model training, not in this repo| MLC[Machine Learning]
+    MLF -.->|Model training<br/>not in this repo| MLC[Machine Learning]
 ```
 
 ### Layers
