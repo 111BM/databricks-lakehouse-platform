@@ -70,8 +70,6 @@ flowchart TD
     MLF -->|ML Models| MLC[Machine Learning]
 ```
 
-<img width="509" height="474" alt="Data flow lifecycle" src="https://github.com/user-attachments/assets/4d69de79-8bfb-4cbb-aca2-c16f2ca06da0" />
-
 ### Layers
 
 | Layer | Modules | What it does |
