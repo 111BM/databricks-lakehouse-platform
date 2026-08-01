@@ -2,6 +2,7 @@
 name = "superstore_medallionarchitecture_dab"
 version = "0.0.1"
 authors = [{ name = "bireshmoktan@gmail.com" }]
+license = { file = "LICENSE" }
 requires-python = ">=3.10,<3.13"
 dependencies = [
     # Any dependencies for jobs and pipelines in this project can be added here
