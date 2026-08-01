@@ -4,7 +4,7 @@ An end-to-end **lakehouse data platform** on Databricks Serverless: Medallion Ar
 
 **What makes this project different from most portfolio pipelines:**
 
-- **Tested like production software** — 85+ unit tests against extracted pure functions, plus an end-to-end integration test that seeds dirty data, runs the *real* 18-task pipeline in an isolated environment, asserts every layer, verifies SCD2 change detection & idempotency across two loads, and always cleans up.
+- **Tested like production software** — 87 unit tests against extracted pure functions, plus an end-to-end integration test that seeds dirty data, runs the *real* 18-task pipeline in an isolated environment, asserts every layer, verifies SCD2 change detection & idempotency across two loads, and always cleans up.
 - **Git is the single source of truth** — every notebook, module, and YAML config is deployed by the bundle (`${workspace.file_path}` paths + runtime-derived `BUNDLE_ROOT`); nothing is hand-synced to the workspace.
 - **Data quality as routing, not filtering** — invalid rows are quarantined with named rule violations (`error_columns`), duplicates are audited, and a reconciliation invariant guarantees `bronze == silver + quarantine + audit` (nothing silently lost).
 
