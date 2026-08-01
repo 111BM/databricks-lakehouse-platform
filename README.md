@@ -146,7 +146,7 @@ Everything runs against isolated `integration_test_*` schemas and a dedicated vo
 
 ![Integration test job DAG on Databricks Serverless](docs/images/integration_tests_DAG.png)
 
-*The `superstore_integration_test` job: the real pipeline run twice (initial load, then an SCD2 change), asserting every layer in between and always cleaning up — end to end in ~23 min on serverless.*
+*The `superstore_integration_test` job: the real pipeline run twice (initial load, then an SCD2 change), asserting every layer in between and always cleaning up — end to end in ~22 min on serverless.*
 
 ```bash
 databricks bundle run superstore_integration_test --target qa
