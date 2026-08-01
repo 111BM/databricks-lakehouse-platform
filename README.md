@@ -43,8 +43,8 @@ flowchart TD
     end
 
     subgraph GOLD[Gold Layer]
-        DIM["Dim-Tables<br/>dim_customers, dim_products"]
-        FCT["Fact-Tables<br/>facts_orders, facts_sales"]
+        DIM["Dimensions-Tables"]
+        FCT["Fact-Tables"]
     end
 
     subgraph SEM[Semantic Layer]
