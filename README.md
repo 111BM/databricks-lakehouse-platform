@@ -22,29 +22,29 @@ flowchart TD
 
     subgraph BRONZE[Bronze Layer]
         ING[01 - Raw Ingestion]
-        RAW[superstore_raw]
+        RAW["superstore_raw<br/>one big table"]
         SPLIT[02 - Entity Split]
-        ENT[superstore_entity_bronze]
+        ENT["customers · products<br/>orders · sales"]
         ING -->|Write to superstore_raw| RAW
         RAW --> SPLIT
-        SPLIT -->|Write to superstore_entity_bronze| ENT
+        SPLIT -->|Four entity tables| ENT
     end
 
     subgraph SILVER[Silver Layer]
         DQ[Data Quality Check]
-        QUAR[Quarantine Table]
-        GOOD[Good Rows]
-        AUD["Duplicate Rows to Audit Table"]
-        SLV[superstore_silver]
-        DQ -->|Dirty Rows| QUAR
-        DQ -->|Good Rows| GOOD
-        GOOD -->|Deduplication| AUD
-        AUD -->|Deduplicated Rows| SLV
+        QUAR["Quarantine<br/>per-entity _dirty tables"]
+        GOOD[Valid Rows]
+        AUD["Audit<br/>per-entity _duplicates tables"]
+        SLV["Clean entities<br/>customers · products · orders · sales"]
+        DQ -->|Invalid rows| QUAR
+        DQ -->|Valid rows| GOOD
+        GOOD -->|Duplicate losers| AUD
+        GOOD -->|Latest wins, SHA-256 hash| SLV
     end
 
     subgraph GOLD[Gold Layer]
-        DIM[SCD2 Dimensions]
-        FCT[Fact Tables]
+        DIM["SCD2 Dimensions<br/>dim_customers · dim_products"]
+        FCT["Fact Tables<br/>facts_orders · facts_sales"]
     end
 
     subgraph SEM[Semantic Layer]
@@ -62,9 +62,9 @@ flowchart TD
     SLV -->|Incremental append| FCT
     DIM --> MARTS
     FCT --> MARTS
-    DIM --> KPI
-    FCT --> KPI
+    DIM --> MLF
     FCT --> MLF
+    MARTS -->|Built on marts| KPI
     MARTS -->|Reports / Dashboards| BI[BI Consumption]
     KPI -->|Metrics & Alerts| BI
     MLF -->|ML Models| MLC[Machine Learning]
