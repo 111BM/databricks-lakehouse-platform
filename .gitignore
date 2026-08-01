@@ -5,6 +5,7 @@ __pycache__/
 *.egg-info
 .venv/
 .DS_Store
+.Rhistory
 scratch/**
 !scratch/README.md
 **/explorations/**
