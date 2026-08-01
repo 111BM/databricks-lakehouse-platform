@@ -34,8 +34,8 @@ flowchart TD
         DQ[Data Quality Check]
         QUAR["Quarantine<br/>per-entity _dirty tables"]
         GOOD[Valid Rows]
-        AUD["Audit<br/>per-entity _duplicates tables"]
-        SLV["Silver<br/>per-entity _de-duplicates tables"]
+        AUD["Audit<br/>per-entity_duplicates tables"]
+        SLV["Silver<br/>per-entity_de-duplicates tables"]
         DQ -->|Invalid rows| QUAR
         DQ -->|Valid rows| GOOD
         GOOD -->|Duplicate losers| AUD
@@ -43,8 +43,8 @@ flowchart TD
     end
 
     subgraph GOLD[Gold Layer]
-        DIM["SCD2 Dimensions<br/>dim_customers, dim_products"]
-        FCT["Fact Tables<br/>facts_orders, facts_sales"]
+        DIM["Dim-Tables<br/>dim_customers, dim_products"]
+        FCT["Fact-Tables<br/>facts_orders, facts_sales"]
     end
 
     subgraph SEM[Semantic Layer]
