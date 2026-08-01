@@ -57,7 +57,7 @@ flowchart TD
     end
 
     VOL -->|Auto Loader<br/>incremental| ING
-    ENT -->|Apply Data Quality Checks/Transfromations| DQ
+    ENT -->|Transformations| DQ
     SLV -->|SCD2 MERGE| DIM
     SLV -->|Incremental append| FCT
     DIM --> MARTS
