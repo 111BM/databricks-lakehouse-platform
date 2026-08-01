@@ -15,14 +15,12 @@ An end-to-end **lakehouse data platform** on Databricks Serverless: Medallion Ar
 ```mermaid
 flowchart TD
     subgraph ACQ[Acquisition]
-        direction LR
         SRC[Source feed<br/>GitHub Datasets repo]
         VOL[Raw CSV<br/>landing volume]
         SRC -->|Contents API<br/>new files only| VOL
     end
 
     subgraph BRONZE[Bronze Layer]
-        direction LR
         ING[01 - Raw Ingestion]
         RAW["superstore_raw<br/>one big table"]
         SPLIT[02 - Entity Split]
@@ -33,7 +31,6 @@ flowchart TD
     end
 
     subgraph SILVER[Silver Layer]
-        direction LR
         DQ[Data Quality Check]
         QUAR["Quarantine<br/>per-entity<br/>_dirty tables"]
         GOOD[Valid Rows]
