@@ -66,16 +66,7 @@ from pyspark.sql.functions import (
 # Used for regex handling and system-level operations
 # -----------------------------
 import re
-import sys
 import os
-
-# -----------------------------
-# Extend Python path for shared utilities
-# Enables importing project-specific reusable modules in Databricks workspace
-# -----------------------------
-sys.path.append(
-    "/Workspace/Users/bireshmoktan@gmail.com/superstore_medallionarchitecture_dab/src/superstore_shared_utilities"
-)
 
 # -----------------------------
 # Custom logging utilities
