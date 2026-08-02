@@ -55,10 +55,30 @@ import requests
 
 listing_url = env_cfg["source_listing_url"]
 
+# GitHub allows 60 API requests/hour to anonymous callers, counted per source IP —
+# and Serverless egresses from shared addresses we do not control, so a stranger can
+# exhaust the quota and turn this task into a 403. A token lifts it to 5,000/hour.
+#
+# The secret is optional on purpose: a workspace that has not set it up still runs,
+# just on the anonymous limit. Nothing here is a private-repo credential; the source
+# is public and the token exists only to raise the rate limit.
+try:
+    _github_token = dbutils.secrets.get(scope="superstore", key="github_pat")
+except Exception:
+    _github_token = None
+
+session = requests.Session()
+session.headers["Accept"] = "application/vnd.github+json"
+if _github_token:
+    session.headers["Authorization"] = f"Bearer {_github_token}"
+    print("github auth=token (5,000 req/hour)")
+else:
+    print("github auth=anonymous (60 req/hour) — create the superstore/github_pat secret to raise it")
+
 # NOTE: the GitHub contents API returns at most 1000 entries per directory and
 # truncates silently beyond that. Fine at one file per load; if a source folder
 # ever approaches 1000 files, add pagination or archive older ones into subfolders.
-response = requests.get(listing_url, timeout=60)
+response = session.get(listing_url, timeout=60)
 response.raise_for_status()
 
 # Only data files. This also skips the README placeholders that exist purely so
@@ -90,7 +110,7 @@ print(f"source={len(source_files)} landed={len(already_landed)} new={len(new_fil
 # COMMAND ----------
 
 for item in new_files:
-    resp = requests.get(item["download_url"], timeout=300)
+    resp = session.get(item["download_url"], timeout=300)
     resp.raise_for_status()
     with open(landing + item["name"], "wb") as out:
         out.write(resp.content)

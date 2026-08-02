@@ -22,7 +22,7 @@ Key Features:
 
 4. Error Handling & Resilience:
     - Safe to rerun without affecting existing data.
-    - Loghttps://dbc-081a6a55-88cd.cloud.databricks.com/browse/folders/2666713180999236?o=189811461030739&contextId=folder%3A2666713180999206$0s warnings for Z-Order failures or table creation issues without stopping execution.
+    - Logs warnings for Z-Order failures or table creation issues without stopping execution.
 
 5. Configuration-Driven:
     - Entity table definitions, business keys, column selections, and Z-Order columns
