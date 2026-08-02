@@ -70,6 +70,12 @@ flowchart TD
     MLF -.->|Model training<br/>not in this repo| MLC[Machine Learning]
 ```
 
+![Production pipeline run on Databricks Serverless](docs/images/prod_pipeline_DAG.png)
+
+*The `superstore_data_platform_prod` job: 18 tasks from HTTP source acquisition through
+Bronze → Silver → Gold to marts, features and KPI views — end to end in 10m 51s on
+serverless. The same DAG runs in dev, qa and prod; only `SUPERSTORE_ENV` differs.*
+
 ### Layers
 
 | Layer | Modules | What it does |
