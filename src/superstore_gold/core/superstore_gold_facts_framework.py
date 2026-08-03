@@ -908,6 +908,11 @@ def optimize_gold_table(spark, gold_tbl, z_order_cols, master_run_id: str, layer
     Optimizes the Delta Gold table using Z-Ordering on key columns to enhance query performance.
     Z-Ordering improves partition pruning during query execution.
 
+    NOT wired into the pipeline. Predictive Optimization is enabled at the
+    metastore level, so OPTIMIZE already runs automatically on these Unity
+    Catalog managed tables. Kept for workspaces without PO; where PO is
+    available, Liquid Clustering (CLUSTER BY) is the better route.
+
     Args:
         spark (SparkSession): Active Spark session.
         gold_tbl (str): Name of the Gold table to optimize.
@@ -951,6 +956,10 @@ def vacuum_gold_table(spark, gold_tbl, master_run_id: str, layer_run_id: str, la
     """
     Performs a Delta VACUUM operation to remove stale files after a specified retention period.
     This step helps in cleaning up files and improving storage efficiency.
+
+    NOT wired into the pipeline. Predictive Optimization is enabled at the
+    metastore level and already vacuums these Unity Catalog managed tables at
+    the same 168-hour default. Kept for workspaces without PO.
 
     Args:
         spark (SparkSession): Active Spark session.

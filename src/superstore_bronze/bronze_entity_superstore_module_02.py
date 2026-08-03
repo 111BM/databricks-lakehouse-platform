@@ -574,6 +574,10 @@ def optimize_zorder_bronze_tables(
     """
     Optimizes a single Bronze table and applies Z-Order if configured.
     Assumes fully qualified table name is passed from orchestrator.
+
+    NOT wired into the pipeline. Predictive Optimization is enabled at the
+    metastore level, so OPTIMIZE already runs automatically on these Unity
+    Catalog managed tables. Kept for workspaces without PO.
     """
 
     log_event(

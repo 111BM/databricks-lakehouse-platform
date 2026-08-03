@@ -1391,11 +1391,27 @@ def collect_metrics(
 # -----------------------------
 # 9. Optimize and Vacuum Gold Table
 # -----------------------------
-def optimize_gold_table(spark, hash_column, master_run_id: str, layer_run_id: str, layer: str, gold_tbl):
+def optimize_gold_table(spark, gold_tbl, z_order_cols, master_run_id: str, layer_run_id: str, layer: str):
     """
-    Optimizes Gold table for query performance:
-    - Uses Z-Ordering on hash column for efficient predicate pushdown
-    - Recommended after large merges or inserts
+    Optimizes Gold table for query performance using Z-Ordering on the
+    clustering columns declared in dim_config (`z_order_cols`).
+
+    NOT wired into the pipeline. Predictive Optimization is enabled at the
+    metastore level, so OPTIMIZE/VACUUM already run automatically on these
+    Unity Catalog managed tables. Kept for workspaces without PO; where PO is
+    available, Liquid Clustering (CLUSTER BY) is the better route than a
+    scheduled ZORDER job.
+
+    This previously Z-ordered by the SCD2 hash column, which cannot benefit
+    from data skipping: hash values are uniformly distributed, so every file's
+    min/max spans the whole range and no file is ever pruned. Real queries
+    filter on region/state/natural keys - which is what dim_config already
+    declares. Signature now matches the facts framework equivalent.
+
+    Args:
+        spark (SparkSession): Active Spark session.
+        gold_tbl (str): Name of the Gold table to optimize.
+        z_order_cols (list): Columns to Z-Order on (dim_config.z_order_cols).
     """
     log_event(
         logger_gold_dimensional,
@@ -1418,7 +1434,10 @@ def optimize_gold_table(spark, hash_column, master_run_id: str, layer_run_id: st
         return
 
 
-    spark.sql(f"OPTIMIZE {gold_tbl} ZORDER BY {hash_column}")
+    if z_order_cols:
+        spark.sql(f"OPTIMIZE {gold_tbl} ZORDER BY ({','.join(z_order_cols)})")
+    else:
+        spark.sql(f"OPTIMIZE {gold_tbl}")
     log_event(
         logger_gold_dimensional,
         "INFO",
@@ -1434,6 +1453,11 @@ def vacuum_gold_table(spark, master_run_id: str, layer_run_id: str, layer: str, 
     Vacuums Gold table to remove stale/deleted data:
     - Retains 168 hours to ensure safety against late-arriving data
     - Frees up storage while keeping historical snapshots intact
+
+    NOT wired into the pipeline. Predictive Optimization is enabled at the
+    metastore level and already vacuums these Unity Catalog managed tables
+    (also at the 168-hour default, so time travel beyond ~7 days is already
+    unavailable). Kept for workspaces without PO.
     """
     log_event(
         logger_gold_dimensional,

@@ -231,7 +231,7 @@ Gaps I'm aware of and would close before running this at real scale — kept her
 
 1. **Service principal for CI** — deploys currently authenticate with a personal access token; production should use an OAuth M2M service principal.
 2. **Unity Catalog grants** — no per-layer permission model yet (e.g., analysts read gold only).
-3. **Table maintenance** — no scheduled `OPTIMIZE`/`VACUUM` or retention policy (irrelevant at demo scale, required at volume).
+3. **Table maintenance** — handled by Unity Catalog **Predictive Optimization**, which is enabled at the metastore level, so `OPTIMIZE`/`VACUUM` run automatically on these managed tables (VACUUM at the 168-hour default, so time travel beyond ~7 days is already unavailable). The `optimize_*`/`vacuum_*` helpers in the frameworks predate that and are deliberately unwired — running them per-load would duplicate PO and pay compaction cost far more often than fragmentation is created. If data skipping ever became a concern, the route is Liquid Clustering (`CLUSTER BY`) on the gold tables, not a scheduled Z-ORDER job.
 4. **Schema-drift policy** — Auto Loader handles new columns (`addNewColumns`); downstream silver/gold contracts need an explicit evolution strategy.
 5. **Consistent environment pinning** — serverless environment version is pinned on some tasks and default on others; should be one pinned version everywhere.
 6. **Operational runbook** — replay/backfill procedures exist as job parameters but need documentation for operators who didn't build the system.
