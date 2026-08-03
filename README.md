@@ -90,7 +90,7 @@ serverless. The same DAG runs in dev, qa and prod; only `SUPERSTORE_ENV` differs
 
 - **Config-driven** — column contracts, DQ rules, and env-specific paths live in YAML (`configs/`), not code. Adding a rule or entity is a config change.
 - **Environment isolation** — `SUPERSTORE_ENV` (dev/qa/prod/integration_test) resolves schemas (`{env}_bronze`, …) and volume paths per environment via a single job parameter.
-- **Idempotency & backfill** — hash-based change detection, Auto Loader checkpoints, and job parameters (`backfill-mode`: incremental / date_range / full_refresh, `dry-run`) for safe replays.
+- **Idempotency & backfill** — hash-based change detection, Auto Loader checkpoints, and job parameters (`backfill_mode`: incremental / date_range / full_refresh, plus `start_date`/`end_date` and `dry_run`) for safe replays. Operator procedures: **[docs/BACKFILL_QUICK_REFERENCE.md](docs/BACKFILL_QUICK_REFERENCE.md)**.
 - **Observability** — structured logging (`superstore_logger`) with `master_run_id`/`layer_run_id` traceability, per-entity metrics tables per layer, and email notifications on job failure.
 
 ### Performance
@@ -234,7 +234,7 @@ Gaps I'm aware of and would close before running this at real scale — kept her
 3. **Table maintenance** — handled by Unity Catalog **Predictive Optimization**, which is enabled at the metastore level, so `OPTIMIZE`/`VACUUM` run automatically on these managed tables (VACUUM at the 168-hour default, so time travel beyond ~7 days is already unavailable). The `optimize_*`/`vacuum_*` helpers in the frameworks predate that and are deliberately unwired — running them per-load would duplicate PO and pay compaction cost far more often than fragmentation is created. If data skipping ever became a concern, the route is Liquid Clustering (`CLUSTER BY`) on the gold tables, not a scheduled Z-ORDER job.
 4. **Schema-drift policy** — Auto Loader handles new columns (`addNewColumns`); downstream silver/gold contracts need an explicit evolution strategy.
 5. **Consistent environment pinning** — serverless environment version is pinned on some tasks and default on others; should be one pinned version everywhere.
-6. **Operational runbook** — replay/backfill procedures exist as job parameters but need documentation for operators who didn't build the system.
+6. **Operational runbook** — replay/backfill is documented for operators in **[docs/BACKFILL_QUICK_REFERENCE.md](docs/BACKFILL_QUICK_REFERENCE.md)**: copy-paste commands, a pre-flight safety checklist, monitoring queries, troubleshooting, and worked scenarios. Still missing: on-call escalation and a freshness SLA check, which pair with the alert-routing item below.
 7. **Alert routing** — failure emails exist; a real deployment would route to Slack/PagerDuty with a freshness SLA check.
 
 ---

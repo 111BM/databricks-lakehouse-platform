@@ -6,52 +6,48 @@
 
 ## 📋 COMMON COMMANDS
 
+> **Command shape.** `bundle run` takes the **resource key** (`superstore_data_platform`)
+> plus `--target`, *not* the deployed job name. Job parameters are passed with
+> `--params` as comma-separated `k=v` pairs — `--var` sets bundle variables at
+> resolve time and will **not** override job parameters at run time.
+>
+> Parameter names are `backfill_mode`, `start_date`, `end_date`, `dry_run` —
+> underscores, matching the widget keys the notebooks read. A misspelled or
+> hyphenated parameter does **not** error; it is silently ignored and the job
+> runs a normal incremental load. Always confirm the resolved parameters in the
+> run's task detail before trusting a backfill.
+
 ### **Normal Incremental Run** (Default)
 ```bash
-databricks bundle run superstore_data_platform_dev
+databricks bundle run superstore_data_platform --target dev
 ```
 
 ### **Dry-Run (Preview Impact)**
 ```bash
-databricks bundle run superstore_data_platform_dev \
-  --var="backfill_mode=date_range" \
-  --var="start_date=2024-05-01" \
-  --var="end_date=2024-05-07" \
-  --var="dry_run=true"
+databricks bundle run superstore_data_platform --target dev --params backfill_mode=date_range,start_date=2024-05-01,end_date=2024-05-07,dry_run=true
 ```
 
 ### **Backfill Last Week**
 ```bash
-databricks bundle run superstore_data_platform_dev \
-  --var="backfill_mode=date_range" \
-  --var="start_date=2024-05-01" \
-  --var="end_date=2024-05-07"
+databricks bundle run superstore_data_platform --target dev --params backfill_mode=date_range,start_date=2024-05-01,end_date=2024-05-07
 ```
 
 ### **Backfill Last Month**
 ```bash
-databricks bundle run superstore_data_platform_dev \
-  --var="backfill_mode=date_range" \
-  --var="start_date=2024-04-01" \
-  --var="end_date=2024-04-30"
+databricks bundle run superstore_data_platform --target dev --params backfill_mode=date_range,start_date=2024-04-01,end_date=2024-04-30
 ```
 
 ### **Backfill Single Day**
 ```bash
-databricks bundle run superstore_data_platform_dev \
-  --var="backfill_mode=date_range" \
-  --var="start_date=2024-05-01" \
-  --var="end_date=2024-05-01"
+databricks bundle run superstore_data_platform --target dev --params backfill_mode=date_range,start_date=2024-05-01,end_date=2024-05-01
 ```
 
 ### **Backfill Yesterday**
 ```bash
-YESTERDAY=$(date -d "yesterday" +%Y-%m-%d)
-databricks bundle run superstore_data_platform_dev \
-  --var="backfill_mode=date_range" \
-  --var="start_date=$YESTERDAY" \
-  --var="end_date=$YESTERDAY"
+YESTERDAY=$(python3 -c "import datetime;print(datetime.date.today()-datetime.timedelta(days=1))")
+databricks bundle run superstore_data_platform --target dev --params backfill_mode=date_range,start_date=$YESTERDAY,end_date=$YESTERDAY
 ```
+> `date -d "yesterday"` is GNU-only and fails on macOS; the Python form above is portable.
 
 ---
 
@@ -178,8 +174,7 @@ backfill_config = get_backfill_config(
 
 2. Then run:
 ```bash
-databricks bundle run superstore_data_platform_dev \
-  --var="backfill_mode=full_refresh"
+databricks bundle run superstore_data_platform --target dev --params backfill_mode=full_refresh
 ```
 
 **Consequences:**
@@ -216,10 +211,7 @@ databricks bundle run superstore_data_platform_dev \
 **Solution:**
 ```bash
 # Re-ingest May 1st files
-databricks bundle run superstore_data_platform_dev \
-  --var="backfill_mode=date_range" \
-  --var="start_date=2024-05-01" \
-  --var="end_date=2024-05-01"
+databricks bundle run superstore_data_platform --target dev --params backfill_mode=date_range,start_date=2024-05-01,end_date=2024-05-01
 ```
 
 ### **Scenario 2: Fixed Data Quality Rule**
@@ -227,13 +219,9 @@ databricks bundle run superstore_data_platform_dev \
 
 **Solution:**
 ```bash
-# Only re-run Silver + Gold (Bronze data unchanged)
-# Temporarily comment out Bronze task dependency
-# Then run:
-databricks bundle run superstore_data_platform_dev \
-  --var="backfill_mode=date_range" \
-  --var="start_date=2024-03-01" \
-  --var="end_date=2024-03-31"
+# Bronze data is unchanged - re-running the full pipeline is safe and idempotent
+# (Auto Loader skips already-ingested files; Silver/Gold re-derive from Bronze).
+databricks bundle run superstore_data_platform --target dev --params backfill_mode=date_range,start_date=2024-03-01,end_date=2024-03-31
 ```
 
 ### **Scenario 3: Business Logic Change**
@@ -241,38 +229,40 @@ databricks bundle run superstore_data_platform_dev \
 
 **Solution:**
 ```bash
-# Only re-run Gold layer
-# Manually trigger gold_layer_dimensions task with:
-databricks jobs run-now --job-id <job_id> \
-  --task-keys superstore_gold_layer_dimensions \
-  --notebook-params '{
-    "backfill_mode":"date_range",
-    "start_date":"2024-01-01",
-    "end_date":"2024-12-31"
-  }'
+# Re-run the full pipeline for the affected range. Bronze/Silver are idempotent,
+# so the cost is time rather than correctness, and Gold recomputes from Silver.
+databricks bundle run superstore_data_platform --target dev --params backfill_mode=date_range,start_date=2024-01-01,end_date=2024-12-31
 ```
+
+> **Why not just the Gold task?** `bundle run --only superstore_gold_layer_dimensions`
+> runs that task alone — but it skips `superstore_pipeline_master_run_id_init`, whose
+> output the Gold task reads via
+> `{{tasks.superstore_pipeline_master_run_id_init.values.master_run_id}}`. That
+> reference cannot resolve, so the task fails. Use `--only` only for task groups that
+> include their own upstream dependencies.
 
 ### **Scenario 4: Monthly Historical Load**
 **Problem:** Need to load historical data, one month at a time
 
 **Solution:**
 ```bash
-# Script to backfill 6 months
-for month in {1..6}; do
-  start_date="2024-0${month}-01"
-  end_date=$(date -d "${start_date} +1 month -1 day" +%Y-%m-%d)
-  
+# Script to backfill 6 months, one month per run
+for month in 1 2 3 4 5 6; do
+  start_date=$(printf "2024-%02d-01" "$month")
+  end_date=$(python3 -c "
+import datetime,sys
+d=datetime.date.fromisoformat(sys.argv[1])
+nxt=(d.replace(day=28)+datetime.timedelta(days=4)).replace(day=1)
+print(nxt-datetime.timedelta(days=1))" "$start_date")
+
   echo "Backfilling $start_date to $end_date"
-  
-  databricks bundle run superstore_data_platform_dev \
-    --var="backfill_mode=date_range" \
-    --var="start_date=$start_date" \
-    --var="end_date=$end_date"
-  
-  # Wait for completion before next month
-  sleep 300  # 5 minutes
+
+  databricks bundle run superstore_data_platform --target dev --params backfill_mode=date_range,start_date=$start_date,end_date=$end_date
 done
 ```
+> `bundle run` blocks until the run completes and exits non-zero on failure, so no
+> `sleep` is needed between months — and unlike a fixed sleep, a failed month stops
+> the loop if you add `set -e`.
 
 ---
 
@@ -288,15 +278,16 @@ WHERE run_status = 'FAILED'
 ORDER BY start_ts DESC
 LIMIT 5;
 ```
-3. Review [BACKFILL_IMPLEMENTATION_GUIDE.md](./BACKFILL_IMPLEMENTATION_GUIDE.md) troubleshooting section
+3. Review the TROUBLESHOOTING section above
 4. Check `notes` field in metrics for specific errors
 
 ---
 
 ## 📚 RELATED DOCS
 
-- [Full Implementation Guide](./BACKFILL_IMPLEMENTATION_GUIDE.md) - Step-by-step setup
 - [Architecture Overview](../README.md) - System architecture
+- Backfill implementation lives in `src/superstore_shared_utilities/superstore_backfill_utils.py`
+  (`get_backfill_config`, `get_incremental_with_backfill`, `validate_backfill_impact`)
 - Databricks Docs: [Delta Lake Time Travel](https://docs.databricks.com/delta/history.html)
 
 ---
