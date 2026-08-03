@@ -82,7 +82,7 @@ resources:
               SUPERSTORE_ENV: "{{job.parameters.SUPERSTORE_ENV}}"
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
-          environment_key: superstore_bronze_layer_environment 
+          environment_key: superstore_serverless_environment
         - task_key: superstore_catalog_and_schemas_init
           depends_on:
             - task_key: superstore_pipeline_master_run_id_init
@@ -95,6 +95,7 @@ resources:
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
                 n_id}}"
             source: WORKSPACE
+          environment_key: superstore_serverless_environment
         # Acquire source files from the external HTTP feed into the landing volume
         # before Auto Loader runs. Skips itself in integration_test (seed owns that data).
         - task_key: bronze_source_acquisition
@@ -103,7 +104,7 @@ resources:
           notebook_task:
             notebook_path: ${workspace.file_path}/src/superstore_bronze/bronze_source_acquisition
             source: WORKSPACE
-          environment_key: superstore_bronze_layer_environment
+          environment_key: superstore_serverless_environment
         - task_key: superstore_bronze_layer
           depends_on:
             - task_key: superstore_pipeline_master_run_id_init
@@ -118,7 +119,7 @@ resources:
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
                 n_id}}"
             source: WORKSPACE
-          environment_key: superstore_bronze_layer_environment
+          environment_key: superstore_serverless_environment
         - task_key: superstore_silver_layer
           depends_on:
             - task_key: superstore_pipeline_master_run_id_init
@@ -132,7 +133,7 @@ resources:
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
                 n_id}}"
             source: WORKSPACE
-          environment_key: superstore_bronze_layer_environment
+          environment_key: superstore_serverless_environment
         - task_key: superstore_gold_layer_dimensions
           depends_on:
             - task_key: superstore_pipeline_master_run_id_init
@@ -146,7 +147,7 @@ resources:
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
                 n_id}}"
             source: WORKSPACE
-          environment_key: superstore_bronze_layer_environment
+          environment_key: superstore_serverless_environment
         - task_key: superstore_gold_layer_facts
           depends_on:
             - task_key: superstore_pipeline_master_run_id_init
@@ -160,7 +161,7 @@ resources:
               master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_ru\
                 n_id}}"
             source: WORKSPACE
-          environment_key: superstore_bronze_layer_environment
+          environment_key: superstore_serverless_environment
         - task_key: features_customer
           depends_on:
             - task_key: superstore_gold_layer_facts
@@ -168,25 +169,28 @@ resources:
           notebook_task:
             notebook_path: ${workspace.file_path}/src/features/features_customer
             source: WORKSPACE
-          environment_key: superstore_bronze_layer_environment
+          environment_key: superstore_serverless_environment
         - task_key: features_customer_product
           depends_on:
             - task_key: superstore_gold_layer_facts
           notebook_task:
             notebook_path: ${workspace.file_path}/src/features/features_customer_product
             source: WORKSPACE
+          environment_key: superstore_serverless_environment
         - task_key: features_product
           depends_on:
             - task_key: superstore_gold_layer_facts
           notebook_task:
             notebook_path: ${workspace.file_path}/src/features/features_product
             source: WORKSPACE
+          environment_key: superstore_serverless_environment
         - task_key: features_sales_timeseries
           depends_on:
             - task_key: superstore_gold_layer_facts
           notebook_task:
             notebook_path: ${workspace.file_path}/src/features/features_sales_timeseries
             source: WORKSPACE
+          environment_key: superstore_serverless_environment
         - task_key: mart_customer_360
           depends_on:
             - task_key: superstore_gold_layer_facts
@@ -194,13 +198,14 @@ resources:
           notebook_task:
             notebook_path: ${workspace.file_path}/src/marts/mart_customer_360
             source: WORKSPACE
-          environment_key: superstore_bronze_layer_environment
+          environment_key: superstore_serverless_environment
         - task_key: customer_kpi_view
           depends_on:
             - task_key: mart_customer_360
           notebook_task:
             notebook_path: ${workspace.file_path}/src/metrics/customer_kpi
             source: WORKSPACE
+          environment_key: superstore_serverless_environment
         - task_key: mart_production_performance
           depends_on:
             - task_key: superstore_gold_layer_dimensions
@@ -208,13 +213,14 @@ resources:
           notebook_task:
             notebook_path: ${workspace.file_path}/src/marts/mart_production_performance
             source: WORKSPACE
-          environment_key: superstore_bronze_layer_environment
+          environment_key: superstore_serverless_environment
         - task_key: product_insights_kpi_view
           depends_on:
             - task_key: mart_production_performance
           notebook_task:
             notebook_path: ${workspace.file_path}/src/metrics/product_insights_kpi
             source: WORKSPACE
+          environment_key: superstore_serverless_environment
         - task_key: mart_sales_daily
           depends_on:
             - task_key: superstore_gold_layer_dimensions
@@ -222,7 +228,7 @@ resources:
           notebook_task:
             notebook_path: ${workspace.file_path}/src/marts/mart_sales_daily
             source: WORKSPACE
-          environment_key: superstore_bronze_layer_environment
+          environment_key: superstore_serverless_environment
         - task_key: metrics_business_kpi_view
           depends_on:
             - task_key: mart_sales_daily
@@ -230,16 +236,18 @@ resources:
           notebook_task:
             notebook_path: ${workspace.file_path}/src/metrics/metrics_business_kpi
             source: WORKSPACE
+          environment_key: superstore_serverless_environment
         - task_key: metrics_daily_kpi_view
           depends_on:
             - task_key: mart_sales_daily
           notebook_task:
             notebook_path: ${workspace.file_path}/src/metrics/metrics_daily_kpi
             source: WORKSPACE
+          environment_key: superstore_serverless_environment
       queue:
         enabled: true
       environments:
-        - environment_key: superstore_bronze_layer_environment
+        - environment_key: superstore_serverless_environment
           spec:
             environment_version: "5"
 
