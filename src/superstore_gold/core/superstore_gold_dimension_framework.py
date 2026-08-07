@@ -103,7 +103,10 @@ from pyspark.sql.types import (
 # -------------------------------
 from superstore_logger import get_superstore_logger, log_event  # centralized logging framework
 from superstore_platform_constants import GOLD_LAYER            # constant to enforce Gold layer naming consistency
-from superstore_backfill_utils import get_incremental_with_backfill  # incremental and backfill 
+from superstore_backfill_utils import (                            # run-mode support
+    get_incremental_with_backfill,
+    run_mode_load_type
+)
 
 # -----------------------------
 # log_event Setup for gold dimensions
@@ -214,36 +217,41 @@ def get_incremental_silver_for_dims(
 ):
     """
     Returns only new silver rows not yet ingested into gold dimension table.
-    Enhanced with backfill support - handles incremental, date_range, and full_refresh modes.
-    
+    Enhanced with run-mode support - handles incremental, backfill, replay and
+    full_refresh.
+
     Modes:
-    - incremental: Standard watermark-based processing (default)
-    - date_range: Replay specific date range
-    - full_refresh: Reprocess all data
+    - incremental:       Standard watermark-based processing (default)
+    - backfill / replay: Reprocess the start_date..end_date window
+    - full_refresh:      Reprocess all data
+
+    Backfill and replay read identically here; they differ only at Bronze,
+    which a replay skips entirely.
     
     Key Fix for Dimension Tables:
     - Dimension tables don't have ingestion_date column
     - They only have bronze_ingestion_ts and silver_ingestion_ts
-    - This function derives ingestion_date from silver_ingestion_ts for date_range backfill
+    - This function derives ingestion_date from silver_ingestion_ts for windowed runs
     - Uses SILVER (not bronze) timestamp because SCD2 logic tracks dimension changes at Silver layer
     """
     
     log_event(
         logger_gold_dimensional,
         "INFO",
-        f"Reading silver dimension table with backfill mode: {backfill_config.get('mode', 'incremental')}",
+        f"Reading silver dimension table with run mode: {backfill_config.get('mode', 'incremental')}",
         master_run_id=master_run_id,
         layer_run_id=layer_run_id,
         layer=GOLD_LAYER
     )
     
-    # CRITICAL FIX: Check if we need to derive ingestion_date for date_range backfill
-    is_date_range_backfill = (
-        backfill_config.get("is_backfill") and 
-        backfill_config.get("mode") == "date_range"
+    # Windowed runs (backfill and replay) select by date rather than watermark.
+    # This table has no ingestion_date column of its own, so it is derived below.
+    is_windowed_run = (
+        backfill_config.get("is_backfill") and
+        backfill_config.get("is_windowed")
     )
-    
-    if is_date_range_backfill:
+
+    if is_windowed_run:
         # Read the silver table first to check columns
         df_silver = spark.table(silver_table)
         
@@ -1107,9 +1115,14 @@ def collect_metrics(
     end_ts,
     duration_secs,
     max_rows_per_bucket: int,
+    backfill_config: dict = None,
 ):
     """
     Optimized metrics collection using Delta merge metrics
+
+    backfill_config is optional and only affects load_type: it records the run
+    mode when the run was not a plain incremental load, so the metrics table
+    can answer "which runs were replays?" without adding a column.
     """
 
     log_event(
@@ -1213,12 +1226,12 @@ def collect_metrics(
         
         # CASE 3.2: NO_CHANGE
         elif  not has_changes:
-            load_type = "INCREMENTAL"
+            load_type = run_mode_load_type(backfill_config, "INCREMENTAL")
             notes = f"No changes detected for {gold_tbl}"
             
         # CASE 3.3: Real SCD2 changes occurred
         else:
-            load_type = "INCREMENTAL"
+            load_type = run_mode_load_type(backfill_config, "INCREMENTAL")
             notes = f"SCD2 changes applied to {gold_tbl}"
         
         run_status = "SUCCESS"

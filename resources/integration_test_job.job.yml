@@ -33,7 +33,7 @@ resources:
             job_id: ${resources.jobs.superstore_data_platform.id}
             job_parameters:
               SUPERSTORE_ENV: "integration_test"
-              backfill_mode: "incremental"
+              run_mode: "incremental"
               start_date: ""
               end_date: ""
               dry_run: "false"
@@ -98,7 +98,7 @@ resources:
             job_id: ${resources.jobs.superstore_data_platform.id}
             job_parameters:
               SUPERSTORE_ENV: "integration_test"
-              backfill_mode: "incremental"
+              run_mode: "incremental"
               start_date: ""
               end_date: ""
               dry_run: "false"

@@ -6,55 +6,74 @@ resources:
         Superstore Lakehouse ETL Pipeline - Medallion Architecture (Bronze → Silver → Gold)
         
         PARAMETERS:
-        
-        backfill_mode (string):
+
+        run_mode (string):
           • incremental  - Process only new data since last run (DEFAULT for scheduled runs)
-          • date_range   - Replay specific date range (requires start_date & end_date)
-          • full_refresh - Reprocess all data from scratch (DANGEROUS - use with caution)
-        
+          • backfill     - Load data never loaded. Re-acquires from source, so Bronze runs.
+                           Requires start_date; end_date defaults to today.
+          • replay       - Re-derive Silver and Gold from the Bronze already held, because
+                           the logic changed. Bronze is SKIPPED - the source is never
+                           contacted. Requires start_date.
+          • full_refresh - Replay with no window. DISABLED by default: enabling it takes a
+                           code change (allow_full_refresh), not a parameter.
+
+          Anything else raises. An unrecognised mode used to fall back to incremental,
+          which meant a typo ran a normal load while reporting success.
+
         start_date (YYYY-MM-DD):
-          • Required for date_range mode
+          • Required for backfill and replay
           • Example: 2026-05-08
           • Leave empty for incremental/full_refresh
-        
+
         end_date (YYYY-MM-DD):
-          • Required for date_range mode
+          • Optional for backfill and replay; defaults to today
           • Example: 2026-05-10
           • Leave empty for incremental/full_refresh
-        
+
         dry_run (true | false):
-          • true  - Validate without writing data (preview mode)
+          • true  - Report impact and exit before writing, in EVERY task that writes
           • false - Execute and write data (DEFAULT)
-        
-        💡 USAGE EXAMPLES:
-        
+
+          dry_run is a modifier, not a mode: it combines with any of the four above.
+
+        NOTE: the window filters INGESTION date, not business date. "backfill May"
+        means "reprocess what arrived in May", not "orders placed in May".
+
+        USAGE EXAMPLES:
+
         Normal Run:
-          backfill_mode: incremental
+          run_mode: incremental
           dry_run: false
-        
-        Replay 1 Day:
-          backfill_mode: date_range
+
+        Preview a replay before running it:
+          run_mode: replay
+          start_date: 2026-05-08
+          end_date: 2026-05-08
+          dry_run: true
+
+        Replay 1 Day (after a logic fix):
+          run_mode: replay
           start_date: 2026-05-08
           end_date: 2026-05-08
           dry_run: false
-        
-        Full Backfill:
-          backfill_mode: full_refresh
-          start_date: 
-          end_date: 
+
+        Backfill a window the source never delivered:
+          run_mode: backfill
+          start_date: 2026-05-01
+          end_date: 2026-05-07
           dry_run: false
-      
+
       # Job-level parameters (visible in UI).
       #
       # Each name MUST MATCH the widget key the notebook reads (underscores here,
-      # e.g. dbutils.widgets.get("backfill_mode")). Databricks pushes a job parameter
+      # e.g. dbutils.widgets.get("run_mode")). Databricks pushes a job parameter
       # straight into a task widget that shares its key, so no base_parameters entry
       # is needed. A hyphenated name does NOT resolve via {{job.parameters.x-y}} in
       # base_parameters - it arrives literal, which silently disabled dry_run and
-      # backfill_mode until this was fixed.
+      # the run mode until this was fixed.
       parameters:
-        - name: backfill_mode
-          default: ${var.backfill_mode}
+        - name: run_mode
+          default: ${var.run_mode}
         - name: start_date
           default: ${var.start_date}
         - name: end_date

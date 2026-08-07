@@ -51,6 +51,34 @@ if "source_listing_url" not in env_cfg:
 
 # COMMAND ----------
 
+# Run mode gate.
+#
+# Only incremental and backfill acquire from source. A replay re-derives Silver
+# and Gold from the Bronze data already held, so contacting the source is both
+# wasted work and — once the vendor has aged those files out — impossible. A
+# dry run must not download either: writing files into the landing volume is a
+# side effect, even though nothing reaches a table yet.
+#
+# Exiting cleanly rather than failing keeps the downstream tasks running; they
+# depend on this task succeeding, not on it acquiring anything.
+sys.path.append(f"{BUNDLE_ROOT}/src/superstore_shared_utilities")
+from superstore_backfill_utils import get_backfill_config, reads_from_source
+
+backfill_config = get_backfill_config(dbutils, allow_full_refresh=False)
+run_mode = backfill_config["mode"]
+
+if not reads_from_source(backfill_config):
+    dbutils.notebook.exit(
+        f"SKIPPED_ACQUISITION run_mode={run_mode} (re-deriving from existing Bronze, source not contacted)"
+    )
+
+if backfill_config["dry_run"]:
+    dbutils.notebook.exit(
+        f"DRY_RUN_COMPLETED run_mode={run_mode} layer=source_acquisition (no files downloaded)"
+    )
+
+# COMMAND ----------
+
 import requests
 
 listing_url = env_cfg["source_listing_url"]

@@ -89,7 +89,10 @@ from superstore_logger import get_superstore_logger, log_event
 
 # Platform constants (ensures consistent layer naming and governance rules)
 from superstore_platform_constants import GOLD_LAYER
-from superstore_backfill_utils import get_incremental_with_backfill  # incremental and backfill 
+from superstore_backfill_utils import (                            # run-mode support
+    get_incremental_with_backfill,
+    run_mode_load_type
+)
 
 
 # -------------------------------
@@ -196,35 +199,40 @@ def get_incremental_silver_for_facts(
 ):
     """
     Returns only new silver rows not yet ingested into gold fact table.
-    Enhanced with backfill support - handles incremental, date_range, and full_refresh modes.
-    
+    Enhanced with run-mode support - handles incremental, backfill, replay and
+    full_refresh.
+
     Modes:
-    - incremental: Standard watermark-based processing (default)
-    - date_range: Replay specific date range
-    - full_refresh: Reprocess all data
+    - incremental:       Standard watermark-based processing (default)
+    - backfill / replay: Reprocess the start_date..end_date window
+    - full_refresh:      Reprocess all data
+
+    Backfill and replay read identically here; they differ only at Bronze,
+    which a replay skips entirely.
     
     Key Fix for Fact Tables:
     - Fact tables don't have ingestion_date column (unlike dimensions)
     - They only have bronze_ingestion_ts and silver_ingestion_ts
-    - This function derives ingestion_date from bronze_ingestion_ts for date_range backfill
+    - This function derives ingestion_date from bronze_ingestion_ts for windowed runs
     """
     
     log_event(
         logger_gold_facts,
         "INFO",
-        f"Reading silver fact table with backfill mode: {backfill_config.get('mode', 'incremental')}",
+        f"Reading silver fact table with run mode: {backfill_config.get('mode', 'incremental')}",
         master_run_id=master_run_id,
         layer_run_id=layer_run_id,
         layer=GOLD_LAYER
     )
     
-    # CRITICAL FIX: Check if we need to derive ingestion_date for date_range backfill
-    is_date_range_backfill = (
-        backfill_config.get("is_backfill") and 
-        backfill_config.get("mode") == "date_range"
+    # Windowed runs (backfill and replay) select by date rather than watermark.
+    # This table has no ingestion_date column of its own, so it is derived below.
+    is_windowed_run = (
+        backfill_config.get("is_backfill") and
+        backfill_config.get("is_windowed")
     )
-    
-    if is_date_range_backfill:
+
+    if is_windowed_run:
         # Read the silver table first to check columns
         df_silver = spark.table(silver_table)
         
@@ -605,7 +613,8 @@ def collect_fact_metrics(
     duration_secs,
     master_run_id: str,
     layer_run_id: str,
-    layer: str
+    layer: str,
+    backfill_config: dict = None
 ):
     """
     Collects operational observability metrics for fact pipelines, ensuring transparency into
@@ -730,12 +739,12 @@ def collect_fact_metrics(
             
             # CASE 3.2: NO_CHANGE
             elif  not has_changes:
-                load_type = "INCREMENTAL"
+                load_type = run_mode_load_type(backfill_config, "INCREMENTAL")
                 notes = f"No changes detected for {gold_table}"
                 
             # CASE 3.3: Real UPSERT changes occurred
             else:
-                load_type = "INCREMENTAL"
+                load_type = run_mode_load_type(backfill_config, "INCREMENTAL")
                 notes = f"UPSERT changes applied to {gold_table}"
 
             run_status = "SUCCESS"

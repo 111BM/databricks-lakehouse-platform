@@ -164,7 +164,10 @@ from uuid import uuid4  # Generates unique identifiers for tracking runs/events
 # -----------------------------
 from superstore_logger import get_superstore_logger, log_event          # Custom logging framework
 from superstore_platform_constants import SILVER_LAYER                  # Layer constant for Silver pipeline
-from superstore_backfill_utils import get_incremental_with_backfill     # backfill support
+from superstore_backfill_utils import (                                 # run-mode support
+    get_incremental_with_backfill,
+    run_mode_load_type
+)
 from superstore_silver_transformations import (                                    # pure logic (unit-tested)
     classify_duplicates,
     row_hash,
@@ -862,6 +865,9 @@ def bronze_to_silver_prod(
                     # -----------------------------
                     # Status + load_type
                     # -----------------------------
+                    # load_type records the run mode when it is not a plain
+                    # incremental load, so the metrics table can answer "which
+                    # runs were replays?" without adding a column.
                     if target_empty:
                         run_status = "SUCCESS"
                         load_type = "INITIAL_LOAD"
@@ -869,12 +875,12 @@ def bronze_to_silver_prod(
 
                     elif not has_changes:
                         run_status = "SUCCESS"
-                        load_type = "INCREMENTAL"
+                        load_type = run_mode_load_type(backfill_config, "INCREMENTAL")
                         notes = f"No changes detected for {silver_table}"
 
                     else:
                         run_status = "SUCCESS"
-                        load_type = "INCREMENTAL"
+                        load_type = run_mode_load_type(backfill_config, "INCREMENTAL")
                         notes = f"Data successfully merged into target table {silver_table}"
 
                     log_event(

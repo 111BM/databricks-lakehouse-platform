@@ -1,42 +1,52 @@
 """
 ==============================================================
-Module: Superstore Backfill & Replay Utilities
+Module: Superstore Run Mode (Backfill / Replay) Utilities
 
 Purpose:
-    Provides production-ready backfill/replay capabilities for the
-    medallion architecture. Supports date-range based reprocessing
-    at Bronze, Silver, and Gold layers while maintaining idempotency.
+    Turns the job's run parameters into a validated config that every
+    layer reads, so that backfill, replay and dry-run behave the same
+    way across Bronze, Silver and Gold.
 
-Key Features:
-1. Backfill Mode Detection:
-    - Automatic detection of backfill parameters
-    - Safe defaults to prevent accidental full rewrites  
-    - Dry-run mode for validation
+The four run modes
+------------------
+    incremental   Watermark-based load of new data only. The scheduled
+                  default; ~99% of runs.
 
-2. Date Range Management:
-    - Parse and validate start_date/end_date
-    - Generate partition filters for Bronze/Silver/Gold
-    - Support for open-ended ranges ("all data since X")
+    backfill      Data that was never loaded. Re-acquires from source, so
+                  Bronze runs. Windowed by start_date/end_date.
 
-3. Safety Mechanisms:
-    - Max date range limits (prevent accidental 10-year replays)
-    - Confirmation prompts for large backfills
-    - Dry-run mode to preview impact
+    replay        Data already in Bronze, re-derived because the logic
+                  changed. Bronze is SKIPPED entirely — replays never
+                  contact the source system. Windowed.
 
-4. Metrics & Logging:
-    - Track backfill progress
-    - Separate metrics for backfill vs incremental
-    - Audit trail for compliance
+    full_refresh  Replay with no window. Kept as a distinct mode, rather
+                  than "replay with no dates", so that an unbounded
+                  reprocess is always an explicit choice and never the
+                  result of a forgotten parameter. Gated behind
+                  allow_full_refresh.
+
+The distinction that drives the design: backfill is missing data with the
+same logic, replay is existing data with new logic. Only incremental and
+backfill read from the source; replay and full_refresh stay inside the
+lakehouse, which matters because a source system rarely still holds the
+files six months later.
+
+dry_run is orthogonal to all four. It is a modifier, not a mode: you dry
+run *a backfill* or *a replay*. Every task that writes must honour it, or
+it is worse than not having it — a dry run that writes while reporting
+success creates false confidence exactly when an operator is being careful.
 
 Usage:
     from superstore_backfill_utils import (
         get_backfill_config,
-        get_incremental_with_backfill
+        get_incremental_with_backfill,
+        reads_from_source,
+        is_dry_run,
     )
-    
+
     config = get_backfill_config(dbutils)
     df = get_incremental_with_backfill(
-        spark, source_table, target_table, config, 
+        spark, source_table, target_table, config,
         master_run_id, layer_run_id, layer
     )
 ==============================================================
@@ -54,84 +64,105 @@ from superstore_logger import get_superstore_logger, log_event
 logger = get_superstore_logger("superstore_backfill_utils")
 
 
+# The complete set of run modes. Anything outside this set is an operator
+# error and must fail loudly: a mode that silently degrades to "incremental"
+# means a typo runs a normal load while the operator believes a replay is in
+# progress, and the job still reports success.
+VALID_RUN_MODES = ("incremental", "backfill", "replay", "full_refresh")
+
+# Modes that re-read the source system. Replay and full_refresh re-derive from
+# data already in Bronze, so the Bronze tasks skip themselves for those.
+SOURCE_READING_MODES = ("incremental", "backfill")
+
+# Modes that select rows by a date window rather than a watermark.
+WINDOWED_MODES = ("backfill", "replay")
+
+
+def _read_widget(dbutils, name: str) -> Optional[str]:
+    """
+    Read a job parameter, treating "not set" and "set to empty" alike.
+
+    Databricks pushes every declared job parameter to every notebook task, and
+    the bundle declares empty defaults for start_date/end_date. An unset widget
+    raises; an unset *bundle variable* arrives as "". Both mean "not provided".
+    """
+    try:
+        value = dbutils.widgets.get(name)
+    except Exception:
+        return None
+
+    if value is None:
+        return None
+
+    value = value.strip()
+    return value or None
+
+
 def get_backfill_config(
     dbutils,
     allow_full_refresh: bool = False,
     max_days: int = 365
 ) -> Dict:
     """
-    Parse backfill parameters from job/notebook widgets.
-    
+    Parse and validate the run parameters shared by every layer.
+
     Expected Parameters:
-    - backfill_mode: 'incremental' (default) | 'date_range' | 'full_refresh'
-    - start_date: 'YYYY-MM-DD' (required for date_range)
+    - run_mode: 'incremental' (default) | 'backfill' | 'replay' | 'full_refresh'
+    - start_date: 'YYYY-MM-DD' (required for backfill and replay)
     - end_date: 'YYYY-MM-DD' (optional, defaults to today)
     - dry_run: 'true' | 'false' (default false)
-    
+
     Returns:
         Dict with:
-        - is_backfill: bool
-        - mode: str
+        - mode: str                one of VALID_RUN_MODES
+        - is_backfill: bool        True for anything other than incremental
+        - reads_source: bool       True when Bronze should acquire and ingest
+        - is_windowed: bool        True when start_date/end_date apply
         - start_date: datetime | None
         - end_date: datetime | None
         - dry_run: bool
-    
+
     Raises:
-        ValueError: If dates are invalid or range too large
+        ValueError: unknown mode, missing/invalid dates, range too large, or
+                    full_refresh without an explicit opt-in.
     """
-    
-    # Get parameters (with safe defaults)
-    try:
-        backfill_mode = dbutils.widgets.get("backfill_mode")
-    except:
-        backfill_mode = "incremental"
-    
-    try:
-        start_date_str = dbutils.widgets.get("start_date")
-    except:
-        start_date_str = None
-    
-    try:
-        end_date_str = dbutils.widgets.get("end_date")
-    except:
-        end_date_str = None
-    
-    try:
-        dry_run = dbutils.widgets.get("dry_run").lower() == "true"
-    except:
-        dry_run = False
-    
-    # Parse mode
-    mode = backfill_mode.lower()
-    if mode not in ["incremental", "date_range", "full_refresh"]:
-        log_event(
-            logger,
-            "WARN",
-            f"Invalid backfill_mode '{mode}', defaulting to 'incremental'",
-            backfill_mode=mode,
-            layer="BACKFILL"
+
+    run_mode_raw = _read_widget(dbutils, "run_mode")
+    start_date_str = _read_widget(dbutils, "start_date")
+    end_date_str = _read_widget(dbutils, "end_date")
+
+    dry_run_raw = _read_widget(dbutils, "dry_run")
+    dry_run = (dry_run_raw or "").lower() == "true"
+
+    # An absent parameter is not an error — a scheduled run sets nothing and
+    # must load incrementally. A *present but unrecognised* one is an error.
+    mode = (run_mode_raw or "incremental").lower()
+    if mode not in VALID_RUN_MODES:
+        raise ValueError(
+            f"Unknown run_mode '{mode}'. Valid modes: {', '.join(VALID_RUN_MODES)}. "
+            f"Refusing to run: an unrecognised mode previously fell back to "
+            f"'incremental', which silently performs the wrong operation."
         )
-        mode = "incremental"
-    
-    # Safety check: full_refresh must be explicitly allowed
+
+    # full_refresh reprocesses everything and is the most expensive operation
+    # the pipeline can perform. Reaching it takes a code change, not a parameter.
     if mode == "full_refresh" and not allow_full_refresh:
         raise ValueError(
             "full_refresh mode is disabled. Set allow_full_refresh=True if you really want this."
         )
-    
-    # Parse dates
+
     start_date = None
     end_date = None
-    
-    if mode == "date_range":
+
+    if mode in WINDOWED_MODES:
         if not start_date_str:
-            raise ValueError("start_date is required when backfill_mode='date_range'")
-        
+            raise ValueError(f"start_date is required when run_mode='{mode}'")
+
         try:
             start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
         except ValueError:
             raise ValueError(f"Invalid start_date format: '{start_date_str}'. Use YYYY-MM-DD")
-        
+
         # Default end_date to today if not provided
         if end_date_str:
             try:
@@ -140,11 +171,11 @@ def get_backfill_config(
                 raise ValueError(f"Invalid end_date format: '{end_date_str}'. Use YYYY-MM-DD")
         else:
             end_date = datetime.now()
-        
+
         # Validate date range
         if start_date > end_date:
             raise ValueError(f"start_date ({start_date_str}) cannot be after end_date ({end_date})")
-        
+
         # Safety check: prevent accidentally replaying years of data
         days_diff = (end_date - start_date).days
         if days_diff > max_days:
@@ -152,38 +183,77 @@ def get_backfill_config(
                 f"Date range too large: {days_diff} days. Maximum allowed: {max_days} days. "
                 f"Set max_days parameter higher if this is intentional."
             )
-        
+
         log_event(
             logger,
             "INFO",
-            "Backfill date range validated",
+            f"Run window validated for mode '{mode}'",
+            run_mode=mode,
             start_date=start_date.strftime("%Y-%m-%d"),
             end_date=end_date.strftime("%Y-%m-%d"),
             days=days_diff,
-            layer="BACKFILL"
+            layer="RUN_MODE"
         )
-    
-    # Build config
-    is_backfill = mode in ["date_range", "full_refresh"]
-    
+
     config = {
-        "is_backfill": is_backfill,
         "mode": mode,
+        "is_backfill": mode != "incremental",
+        "reads_source": mode in SOURCE_READING_MODES,
+        "is_windowed": mode in WINDOWED_MODES,
         "start_date": start_date,
         "end_date": end_date,
         "dry_run": dry_run
     }
-    
-    if dry_run:
-        log_event(
-            logger,
-            "INFO",
-            "🔍 DRY RUN MODE: No data will be written",
-            config=config,
-            layer="BACKFILL"
-        )
-    
+
+    log_event(
+        logger,
+        "INFO",
+        f"Run mode resolved: {mode}" + (" (DRY RUN — no data will be written)" if dry_run else ""),
+        run_mode=mode,
+        dry_run=dry_run,
+        reads_source=config["reads_source"],
+        is_windowed=config["is_windowed"],
+        layer="RUN_MODE"
+    )
+
     return config
+
+
+def reads_from_source(backfill_config: Dict) -> bool:
+    """
+    True when the Bronze tasks should acquire and ingest from the source.
+
+    False for replay and full_refresh, which re-derive Silver and Gold from
+    the Bronze data already held. Bronze exists so the source is never asked
+    twice; re-acquiring for a replay is wasted work at best, and impossible
+    once the source has aged the files out.
+    """
+    return backfill_config.get("reads_source", True)
+
+
+def is_dry_run(dbutils) -> bool:
+    """
+    Read only the dry_run flag, for tasks that write but have no mode logic.
+
+    The serving layer (marts, features, KPI views) rebuilds from Gold and does
+    not care which mode produced it — but it does write, so it must not write
+    during a dry run. This deliberately avoids get_backfill_config so that a
+    serving task never raises on the full_refresh gate, which is enforced
+    upstream where it belongs.
+    """
+    value = _read_widget(dbutils, "dry_run")
+    return (value or "").lower() == "true"
+
+
+def run_mode_load_type(backfill_config: Dict, default: str) -> str:
+    """
+    Metrics label for a run: the mode when it is not a plain incremental load.
+
+    Lets the per-layer metrics tables answer "which runs were replays?" without
+    adding a column — load_type already exists in all three metrics schemas.
+    """
+    mode = backfill_config.get("mode", "incremental") if backfill_config else "incremental"
+    return default if mode == "incremental" else mode.upper()
 
 
 def get_incremental_with_backfill(
@@ -198,15 +268,19 @@ def get_incremental_with_backfill(
     date_partition_col: str = "ingestion_date"
 ) -> DataFrame:
     """
-    Enhanced incremental read that supports backfill mode.
-    
+    Incremental read that also serves backfill, replay and full_refresh.
+
     Replaces get_incremental_bronze/silver/gold functions.
-    
+
     Logic:
-    - incremental: Use watermark (max ingestion_ts from target)
-    - date_range: Filter by date partition, ignore watermark
-    - full_refresh: Read all data, ignore watermark
-    
+    - incremental:        Use watermark (max ingestion_ts from target)
+    - backfill / replay:  Filter by date partition, ignore watermark
+    - full_refresh:       Read all data, ignore watermark
+
+    Backfill and replay read identically here. They differ upstream, at Bronze:
+    a backfill re-acquires from source, a replay does not run Bronze at all.
+    By the time Silver and Gold read, both mean "re-derive this window".
+
     Args:
         spark: SparkSession
         source_table: Fully qualified source table name
@@ -284,54 +358,54 @@ def get_incremental_with_backfill(
         )
         return source_df
     
-    # MODE 3: Date Range Backfill
-    if mode == "date_range":
+    # MODE 3: Windowed reprocessing (backfill or replay)
+    if mode in WINDOWED_MODES:
         start_date = backfill_config["start_date"]
         end_date = backfill_config["end_date"]
-        
+
         filtered_df = source_df.filter(
             (col(date_partition_col) >= lit(start_date.strftime("%Y-%m-%d"))) &
             (col(date_partition_col) <= lit(end_date.strftime("%Y-%m-%d")))
         )
-        
+
         log_event(
             logger,
             "INFO",
-            f"Backfill: Filtering {source_table} by {date_partition_col}",
+            f"{mode.capitalize()}: Filtering {source_table} by {date_partition_col}",
+            run_mode=mode,
             start_date=start_date.strftime("%Y-%m-%d"),
             end_date=end_date.strftime("%Y-%m-%d"),
             master_run_id=master_run_id,
             layer_run_id=layer_run_id,
             layer=layer
         )
-        
+
         return filtered_df
-    
+
     return source_df
 
 
 def get_bronze_backfill_config(backfill_config: Dict) -> Tuple[bool, Optional[str]]:
     """
-    Generate Auto Loader config for Bronze layer backfills.
-    
+    Generate Auto Loader config for Bronze.
+
+    Only incremental and backfill reach Bronze — the orchestrator exits before
+    ingestion for replay and full_refresh, so those modes never need an Auto
+    Loader config and fall through to normal operation here.
+
     Returns:
         Tuple of (should_include_existing_files, checkpoint_suffix)
     """
     mode = backfill_config["mode"]
-    
-    if mode == "incremental":
-        return False, None  # Normal operation
-    
-    if mode == "full_refresh":
-        return True, "_full_refresh"  # Separate checkpoint
-    
-    if mode == "date_range":
-        # Use date-specific checkpoint to avoid conflicts
+
+    if mode == "backfill":
+        # A separate checkpoint per window, so re-reading files for one window
+        # cannot disturb the incremental checkpoint the scheduled runs rely on.
         start = backfill_config["start_date"].strftime("%Y%m%d")
         end = backfill_config["end_date"].strftime("%Y%m%d")
         return True, f"_backfill_{start}_{end}"
-    
-    return False, None
+
+    return False, None  # Normal operation
 
 
 def validate_backfill_impact(
@@ -376,7 +450,7 @@ def validate_backfill_impact(
         except:
             partitions_affected = ["unknown"]
     
-    elif backfill_config["mode"] == "date_range":
+    elif backfill_config["mode"] in WINDOWED_MODES:
         start_date = backfill_config["start_date"]
         end_date = backfill_config["end_date"]
         
@@ -401,10 +475,59 @@ def validate_backfill_impact(
     
     # Rough estimate: 10k rows per minute (adjust based on your cluster)
     estimated_runtime_mins = max(1, rows_to_process / 10000) if rows_to_process > 0 else 0
-    
+
     return {
         "total_rows_in_table": total_rows,
         "rows_to_process": rows_to_process,
         "partitions_affected": partitions_affected,
         "estimated_runtime_mins": round(estimated_runtime_mins, 2)
+    }
+
+
+def validate_bronze_impact(
+    dbutils,
+    spark,
+    raw_source_file_path: str,
+    table_name: str,
+    backfill_config: Dict
+) -> Dict:
+    """
+    Dry-run impact for Bronze, which is measured in files rather than rows.
+
+    Silver and Gold can preview by counting rows in a source table. Bronze has
+    no such table yet — its input is a landing volume — so the meaningful
+    preview is which files Auto Loader would read and how large they are.
+
+    Returns:
+        Dict with:
+        - files_in_landing: int
+        - bytes_in_landing: int
+        - sample_files: list       up to 10 names, so the operator can eyeball them
+        - existing_rows_in_bronze: int
+    """
+
+    files = []
+    try:
+        files = [f for f in dbutils.fs.ls(raw_source_file_path) if not f.name.endswith("/")]
+    except Exception as exc:
+        return {
+            "files_in_landing": -1,
+            "bytes_in_landing": -1,
+            "sample_files": [],
+            "existing_rows_in_bronze": -1,
+            "error": f"Could not list '{raw_source_file_path}': {exc}"
+        }
+
+    existing_rows = 0
+    if spark.catalog.tableExists(table_name):
+        try:
+            existing_rows = spark.table(table_name).count()
+        except Exception:
+            existing_rows = -1
+
+    return {
+        "files_in_landing": len(files),
+        "bytes_in_landing": sum(getattr(f, "size", 0) or 0 for f in files),
+        "sample_files": [f.name for f in files[:10]],
+        "existing_rows_in_bronze": existing_rows
     }

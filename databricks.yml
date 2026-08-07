@@ -22,15 +22,17 @@ variables:
   SUPERSTORE_PIPELINE_VERSION:
     description: Version of the Superstore pipeline
 
-  # Backfill variable:
-  backfill_mode:
-    description: Backfill mode (incremental | date_range | full_refresh)
+  # Run mode variables.
+  # incremental (default) | backfill | replay | full_refresh — see the job
+  # description in resources/superstore_lakehouse_job.job.yml for semantics.
+  run_mode:
+    description: Run mode (incremental | backfill | replay | full_refresh)
     default: "incremental"
   start_date:
-    description: Start date for backfill (YYYY-MM-DD)
+    description: Start date for backfill/replay (YYYY-MM-DD)
     default: ""
   end_date:
-    description: End date for backfill (YYYY-MM-DD, defaults to today)
+    description: End date for backfill/replay (YYYY-MM-DD, defaults to today)
     default: ""
   dry_run:
     description: Dry-run mode (true | false)
@@ -53,7 +55,7 @@ targets:
     variables:
       catalog: superstore_catalog
       schema: dev
-      backfill_mode: "incremental"  # Safe default
+      run_mode: "incremental"  # Safe default
       start_date: ""
       end_date: ""
       dry_run: "false"  # Changed from "true" - normal runs should process data
@@ -73,7 +75,7 @@ targets:
     variables:
       catalog: superstore_catalog
       schema: qa
-      backfill_mode: "incremental"
+      run_mode: "incremental"
       start_date: ""
       end_date: ""
       dry_run: "false"
@@ -91,7 +93,7 @@ targets:
     variables:
       catalog: superstore_catalog
       schema: prod
-      backfill_mode: "incremental"
+      run_mode: "incremental"
       start_date: ""
       end_date: ""
       dry_run: "false"

@@ -195,18 +195,21 @@ def bronze_ingest_incremental(
         layer=BRONZE_LAYER
     )
 
-    # Get backfill settings for Auto Loader
-    if backfill_config and backfill_config["mode"] != "incremental":
+    # Get backfill settings for Auto Loader.
+    # Only 'backfill' re-reads existing files; replay and full_refresh never
+    # reach this module because the orchestrator exits before ingestion.
+    if backfill_config and backfill_config["mode"] == "backfill":
         include_existing, checkpoint_suffix = get_bronze_backfill_config(backfill_config)
-        
+
         # Update checkpoint location for backfill
         if checkpoint_suffix:
             checkpoint_location = checkpoint_location + checkpoint_suffix
-        
+
         log_event(
             logger_bronze_ingest,
             "INFO",
             "Bronze backfill mode detected",
+            run_mode=backfill_config["mode"],
             include_existing_files=include_existing,
             checkpoint_suffix=checkpoint_suffix,
             master_run_id=master_run_id,
@@ -321,20 +324,33 @@ def bronze_ingest_incremental(
             )  # Apply sanitization to remaining columns
 
     
-    # Apply date filter for backfill
-    if backfill_config and backfill_config["mode"] == "date_range":
+    # Apply the date window for a backfill.
+    #
+    # This filters source_file_modification_time, NOT ingestion_date. The two
+    # look interchangeable and are not: ingestion_date is derived from
+    # bronze_ingestion_ts, which is stamped current_timestamp() a few lines
+    # above, on every read. Re-reading a file therefore re-stamps it with
+    # today, so filtering ingestion_date against a historical window matches
+    # nothing and the write receives an empty stream — a backfill that silently
+    # ingests zero rows while reporting success.
+    #
+    # source_file_modification_time comes from Auto Loader's _metadata and is a
+    # property of the file itself, so it is stable across re-reads and is what
+    # "when did this data arrive" actually means for a file source.
+    if backfill_config and backfill_config["mode"] == "backfill":
         start_date = backfill_config["start_date"].strftime("%Y-%m-%d")
         end_date = backfill_config["end_date"].strftime("%Y-%m-%d")
-        
+
         df_stream = df_stream.filter(
-            (col("ingestion_date") >= lit(start_date)) &
-            (col("ingestion_date") <= lit(end_date))
+            (to_date(col("source_file_modification_time")) >= lit(start_date)) &
+            (to_date(col("source_file_modification_time")) <= lit(end_date))
         )
-        
+
         log_event(
             logger_bronze_ingest,
             "INFO",
-            "Date filter applied to Bronze stream",
+            "Backfill window applied to Bronze stream (source_file_modification_time)",
+            run_mode=backfill_config["mode"],
             start_date=start_date,
             end_date=end_date,
             master_run_id=master_run_id,
