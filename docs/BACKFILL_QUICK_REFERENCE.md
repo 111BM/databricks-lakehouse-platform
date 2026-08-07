@@ -86,6 +86,27 @@ databricks bundle run superstore_data_platform --target dev --params run_mode=ba
 Run now → *Run with different parameters* → set `run_mode`, `start_date`,
 `end_date`, `dry_run`. Same four parameters, same semantics.
 
+> **The mode field is free text — there is no dropdown.** Databricks job
+> parameters have no enum type, so the UI cannot offer the valid values as a
+> list. Two things cover the gap:
+>
+> 1. The **job description** on the job's page lists all four modes and what
+>    each one does. Read it there before running.
+> 2. The **first task validates and prints a run plan** before any compute is
+>    spent on data. A typo fails in seconds with the valid modes in the error,
+>    and a valid run prints exactly what it is about to do:
+>
+> ```
+> RUN PLAN
+>   run_mode   : replay   (valid: incremental, backfill, replay, full_refresh)
+>   window     : 2024-03-01 to 2024-03-31 (by INGESTION date, not order date)
+>   bronze     : SKIPPED - re-derives from existing Bronze
+>   writes     : NO - dry run, every task reports impact and exits
+> ```
+>
+> Check that block in `superstore_pipeline_master_run_id_init` before letting a
+> reprocessing run continue. If it does not say what you meant, cancel.
+
 ---
 
 ## 🛡️ SAFETY CHECKLIST
