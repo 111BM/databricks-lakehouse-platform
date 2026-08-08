@@ -151,10 +151,29 @@ def row_hash(columns: list, sep: str = "||") -> Column:
     return sha2(concat_ws(sep, *[coalesce(col(c), lit("")) for c in columns]), 256)
 
 
+def content_hash(columns: list, sep: str = "||") -> Column:
+    """
+    Deterministic SHA-256 hash over the given columns, casting each to string
+    first so the input may contain any type — including the array-typed
+    `error_columns`, which `row_hash` cannot take.
+
+    Kept separate from `row_hash` on purpose: `row_hash` is the published
+    formula behind the persisted `*_hash_id` columns, and adding a cast there
+    would change hashes already written to Silver.
+
+    Returns a Column expression.
+    """
+    return sha2(
+        concat_ws(sep, *[coalesce(col(c).cast("string"), lit("")) for c in columns]),
+        256,
+    )
+
+
 def classify_duplicates(
     df: DataFrame,
     business_keys: list,
     order_col: str = "bronze_ingestion_ts",
+    tiebreak_cols: list = None,
 ) -> DataFrame:
     """
     Attach a "row_num" column ranking rows within each `business_keys` group,
@@ -168,16 +187,45 @@ def classify_duplicates(
     cache()/persist(), so re-deriving would mean replaying the whole upstream
     lineage.
 
+    Determinism
+    -----------
+    `order_col` alone does not totally order a group. Duplicates that arrive in
+    the same batch share one `bronze_ingestion_ts`, so the window ties and
+    row_number() picks by whatever order the shuffle happened to produce — the
+    same input could yield different Silver contents on a re-run. A content
+    hash of `tiebreak_cols` is therefore appended as a secondary sort key,
+    which totally orders any two rows that differ in content at all.
+
+    This buys *reproducibility, not correctness*: the surviving row is stable
+    across runs, but the hash carries no business meaning, so it is not a
+    statement about which version is the true latest. That needs a change
+    timestamp the source does not carry (see the deduplication-determinism and
+    retroactive-history entries in the README backlog).
+
+    Rows that are identical across `tiebreak_cols` still tie, and remain
+    interchangeable by definition — either can win without changing the result.
+
     Args:
         df: Input DataFrame (already cleaned/validated).
         business_keys: Columns identifying a logical record.
         order_col: Timestamp column; highest value wins. Default
                    "bronze_ingestion_ts".
+        tiebreak_cols: Columns hashed to break `order_col` ties. Defaults to
+                       every column except the business keys and `order_col`
+                       (which are constant within a group anyway).
 
     Returns:
         The input DataFrame plus a "row_num" integer column.
     """
-    window_spec = Window.partitionBy(*business_keys).orderBy(col(order_col).desc())
+    if tiebreak_cols is None:
+        excluded = {*business_keys, order_col, "row_num"}
+        tiebreak_cols = [c for c in df.columns if c not in excluded]
+
+    order_by = [col(order_col).desc()]
+    if tiebreak_cols:
+        order_by.append(content_hash(tiebreak_cols).desc())
+
+    window_spec = Window.partitionBy(*business_keys).orderBy(*order_by)
 
     return df.withColumn("row_num", row_number().over(window_spec))
 
@@ -186,27 +234,32 @@ def deduplicate_latest_wins(
     df: DataFrame,
     business_keys: list,
     order_col: str = "bronze_ingestion_ts",
+    tiebreak_cols: list = None,
 ):
     """
     Split rows into (winners, losers) for Silver deduplication.
 
     For each group of `business_keys`, the row with the most recent
-    `order_col` wins (latest record wins). All other rows in the group are
+    `order_col` wins (latest record wins); ties on `order_col` are broken by a
+    content hash so the split is reproducible. All other rows in the group are
     losers (duplicates) routed to the audit table.
 
-    Thin wrapper over `classify_duplicates` (which owns the window logic).
+    Thin wrapper over `classify_duplicates` (which owns the window logic and
+    documents what the tiebreak does and does not guarantee).
 
     Args:
         df: Input DataFrame (already cleaned/validated).
         business_keys: Columns identifying a logical record.
         order_col: Timestamp column; highest value wins. Default
                    "bronze_ingestion_ts".
+        tiebreak_cols: Columns hashed to break `order_col` ties. Defaults to
+                       every column except the business keys and `order_col`.
 
     Returns:
         (winners_df, losers_df) tuple. Neither contains the helper
         "row_num" column.
     """
-    classified = classify_duplicates(df, business_keys, order_col)
+    classified = classify_duplicates(df, business_keys, order_col, tiebreak_cols)
 
     winners = classified.filter(col("row_num") == 1).drop("row_num")
     losers = classified.filter(col("row_num") > 1).drop("row_num")

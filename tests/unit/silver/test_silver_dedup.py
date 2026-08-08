@@ -267,3 +267,124 @@ class TestClassifyDuplicates:
 
         assert classified.filter("row_num = 1").count() == 2
         assert classified.filter("row_num > 1").count() == 1
+
+
+@pytest.mark.unit
+class TestDedupDeterminism:
+    """
+    Duplicates that arrive in the same batch share one bronze_ingestion_ts, so
+    ordering by that column alone leaves the window tied and row_number()
+    resolves it by shuffle order -- the same input could produce different
+    Silver contents on a re-run.
+
+    classify_duplicates appends a content hash as a secondary sort key. These
+    tests pin the property that buys: the winner is a function of the row
+    CONTENT, not of the order the rows happened to arrive in.
+
+    Note what is deliberately NOT asserted: that the hash picks the
+    *business-latest* row. It cannot -- no entity carries a change timestamp.
+    The guarantee is reproducibility only.
+    """
+
+    def _winner(self, spark, rows):
+        df = spark.createDataFrame(
+            rows, ["customer_id", "customer_name", "bronze_ingestion_ts"]
+        )
+        winners, _ = deduplicate_latest_wins(df, ["customer_id"])
+        return winners.first()["customer_name"]
+
+    def test_tied_timestamp_winner_is_independent_of_input_order(self, spark):
+        # THE REGRESSION TEST. Same two rows, same timestamp, opposite input
+        # order -- previously the window tied and either could win.
+        forward = [
+            ("CG-12520", "Claire A", _ts(1)),
+            ("CG-12520", "Claire B", _ts(1)),
+        ]
+        reversed_rows = list(reversed(forward))
+
+        assert self._winner(spark, forward) == self._winner(spark, reversed_rows)
+
+    def test_tied_timestamp_winner_is_stable_across_evaluations(self, spark):
+        # Serverless forbids cache(), so the window is re-evaluated on every
+        # action. Two evaluations of the same frame must agree.
+        df = spark.createDataFrame(
+            [
+                ("A", "one", _ts(1)),
+                ("A", "two", _ts(1)),
+                ("A", "three", _ts(1)),
+            ],
+            ["customer_id", "val", "bronze_ingestion_ts"],
+        )
+
+        first = deduplicate_latest_wins(df, ["customer_id"])[0].first()["val"]
+        second = deduplicate_latest_wins(df, ["customer_id"])[0].first()["val"]
+
+        assert first == second
+
+    def test_timestamp_still_outranks_the_tiebreak(self, spark):
+        # The hash is a SECONDARY key: a newer row must win regardless of how
+        # its content hashes. Run both name orderings so the assertion cannot
+        # pass by luck of the hash.
+        for older, newer in [("aaa", "zzz"), ("zzz", "aaa")]:
+            df = spark.createDataFrame(
+                [
+                    ("A", older, _ts(1)),
+                    ("A", newer, _ts(2)),
+                ],
+                ["customer_id", "customer_name", "bronze_ingestion_ts"],
+            )
+
+            winners, _ = deduplicate_latest_wins(df, ["customer_id"])
+
+            assert winners.first()["customer_name"] == newer
+
+    def test_identical_rows_still_produce_one_winner(self, spark):
+        # Rows identical in every column tie even after the tiebreak. That is
+        # harmless -- they are interchangeable -- but exactly one must survive,
+        # or the reconciliation invariant breaks.
+        df = spark.createDataFrame(
+            [
+                ("A", "same", _ts(1)),
+                ("A", "same", _ts(1)),
+            ],
+            ["customer_id", "val", "bronze_ingestion_ts"],
+        )
+
+        winners, losers = deduplicate_latest_wins(df, ["customer_id"])
+
+        assert winners.count() == 1
+        assert losers.count() == 1
+
+    def test_explicit_tiebreak_cols_are_honoured(self, spark):
+        # bronze_to_silver_prod passes business_columns explicitly. Columns
+        # outside that list must not influence the ordering.
+        rows = [
+            ("A", "content", "meta-x", _ts(1)),
+            ("A", "content", "meta-y", _ts(1)),
+        ]
+        df = spark.createDataFrame(
+            rows, ["customer_id", "val", "ignored_col", "bronze_ingestion_ts"]
+        )
+
+        classified = classify_duplicates(
+            df, ["customer_id"], tiebreak_cols=["val"]
+        )
+
+        # "val" is identical in both rows, so restricting the tiebreak to it
+        # leaves them tied -- and still exactly one winner.
+        assert classified.filter("row_num = 1").count() == 1
+        assert classified.filter("row_num > 1").count() == 1
+
+    def test_no_tiebreak_columns_available_is_not_an_error(self, spark):
+        # Degenerate frame: nothing to hash beyond the key and the timestamp.
+        # The window falls back to order_col alone, which is fine because any
+        # tied rows are by construction identical.
+        df = spark.createDataFrame(
+            [("A", _ts(1)), ("A", _ts(1))],
+            ["customer_id", "bronze_ingestion_ts"],
+        )
+
+        winners, losers = deduplicate_latest_wins(df, ["customer_id"])
+
+        assert winners.count() == 1
+        assert losers.count() == 1

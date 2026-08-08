@@ -720,10 +720,17 @@ def bronze_to_silver_prod(
             # classify_duplicates() attaches row_num once; the metrics pass and BOTH
             # output branches below are derived from that same frame, so the dedup
             # window is expressed once rather than per-branch.
+            # tiebreak_cols is passed explicitly rather than left to default: the
+            # frame here also carries error_columns / is_valid, which are derived
+            # from the business columns and so add nothing to the ordering. The
+            # tiebreak makes a same-batch duplicate pair (identical
+            # bronze_ingestion_ts) resolve the same way on every run instead of
+            # by shuffle order -- reproducible, not business-correct.
             classified_df = classify_duplicates(
                 silver_df,
                 business_keys=business_keys,
                 order_col="bronze_ingestion_ts",
+                tiebreak_cols=business_columns,
             )
 
             # -----------------------------
