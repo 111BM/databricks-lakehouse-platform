@@ -7,7 +7,6 @@ dim_config:
     table_type: dimension
     dim_type: customers
     silver_tbl: customers             # Logical Silver table name
-    silver_orders_tbl: orders         #silver orders tbl to grab effecitve date from order_date for customer         
     gold_tbl: dim_customers           # Logical Gold table name
     metrics_table: gold_layer_metrics # Logical metrics table
     required_columns:

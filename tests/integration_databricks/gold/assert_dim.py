@@ -65,6 +65,18 @@ for dim, key in DIMS.items():
     )
     check(f"{dim}: no overlapping validity ranges", overlaps == 0, f"overlaps={overlaps}")
 
+    # Non-overlapping is not the same as valid. A closed row whose effective_to
+    # precedes its own effective_from covers no time at all, so it cannot
+    # overlap anything - the check above passes while every point-in-time query
+    # against that version returns nothing.
+    inverted = (
+        spark.table(fqn)
+        .filter((col("is_current") == False) & (col("effective_to") <= col("effective_from")))
+        .count()
+    )
+    check(f"{dim}: closed versions cover a valid interval", inverted == 0,
+          f"inverted intervals={inverted}")
+
 # COMMAND ----------
 
 # DBTITLE 1,Gold dimension metrics recorded for this run

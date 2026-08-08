@@ -76,7 +76,6 @@ from pyspark.sql.functions import (
     hash,                # generic hash function
     hash as hash_fn,     # alias for clarity in some transformations
     max as spark_max,    # Spark-safe max aggregation
-    min,                 # minimum aggregation
     spark_partition_id,   # used for partition-level skew analysis
     to_date
 )
@@ -393,10 +392,8 @@ def read_silver_table(
 # 2. Prepare SCD2 Columns
 # -----------------------------
 def prepare_scd2_columns(
-    spark,
     silver_df,
     dim_type: str,
-    silver_order_table,
     entity_columns,
     hash_column: str,
     master_run_id: str,
@@ -407,6 +404,26 @@ def prepare_scd2_columns(
     Prepares columns for Slowly Changing Dimension Type 2:
     - Sets effective_from and load timestamps
     - Ensures auditability and reproducibility of SCD2 process
+
+    effective_from is when this version of the row was OBSERVED, and the one
+    property it must have is that it ADVANCES between versions of the same
+    entity. merge_into_gold_table_scd2 closes an old version with
+    "src.effective_from - 1 SECOND", so a value that is constant across an
+    entity's versions closes each row one second before its own start: a
+    negative-length interval that no point-in-time query can ever match. The
+    row exists, is_current is false, effective_to is populated - and the
+    history is silently unusable.
+
+    An earlier version of this function dated the customers dimension from the
+    customer's first order date. That is a business date, but it is the same
+    value for every version of a customer, which is exactly the failure above.
+
+    silver_ingestion_ts is therefore used for every dimension. That is
+    PROCESSING time, not business time: it records when the pipeline saw the
+    state, not when the state changed. The Superstore source carries no change
+    timestamp - nothing says when a customer's segment actually changed - so
+    processing time is the most precise honest answer available. With a CDC
+    source, effective_from would come from the commit timestamp instead.
     """
     log_event(
         logger_gold_dimensional,
@@ -417,27 +434,13 @@ def prepare_scd2_columns(
         layer=GOLD_LAYER
     )
     try:
-        # # Ensure silver_df is a DataFrame
-    
         # -------------------------------
-        # For customer dim: use first order date
+        # effective_from — when this state was observed
         # -------------------------------
-        if dim_type == "customers":
-            silver_orders_df = spark.table(silver_order_table)
-
-            # Compute first order per customer
-            first_order_df = silver_orders_df.groupBy("customer_id") \
-                .agg(min("order_date").alias("first_order_date"))
-
-            # Join with Silver customer data
-            df = silver_df.join(first_order_df, on="customer_id", how="left")
-
-            # Set effective_from: first order date if exists, else silver_ingestion_ts
-            df = df.withColumn("effective_from", col("first_order_date")) \
-                   .drop("first_order_date")
-        else:
-            # For non-transactional dims
-            df = silver_df.withColumn("effective_from", col("silver_ingestion_ts"))
+        # One rule for every dimension. It must advance between versions of the
+        # same entity or the merge closes a row before its own start; see the
+        # docstring for why this is processing time rather than business time.
+        df = silver_df.withColumn("effective_from", col("silver_ingestion_ts"))
 
         # Add gold load timestamp
         # df = df.withColumn("gold_ingestion_ts", current_timestamp())

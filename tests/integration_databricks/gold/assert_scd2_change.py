@@ -47,6 +47,18 @@ if check(f"{DIM} exists", table_exists(DIM)):
     check("CG-12520 previous version was closed (is_current=false, effective_to set)",
           closed.count() >= 1, f"closed={closed.count()}")
 
+    # A closed version must cover a real span of time.
+    #
+    # Checking only that effective_to is populated is not enough, and that gap
+    # is how an inverted timeline survived: the merge closes a row with
+    # "src.effective_from - 1 SECOND", so if effective_from does not advance
+    # between an entity's versions, the closed row ends BEFORE it starts. It is
+    # closed, is_current is false, effective_to is set - and no point-in-time
+    # query can ever land inside it, which is the entire purpose of SCD2.
+    inverted = closed.filter(col("effective_to") <= col("effective_from"))
+    check("CG-12520 closed version covers a valid interval (effective_to > effective_from)",
+          inverted.count() == 0, f"inverted intervals={inverted.count()}")
+
 # COMMAND ----------
 
 # DBTITLE 1,Unchanged customer (DV-13045) — NO phantom version (idempotency)
