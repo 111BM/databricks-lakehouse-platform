@@ -178,32 +178,50 @@ def log_event(logger: logging.Logger, level: str, message: str, layer: str, mast
     
     Args:
         logger (logging.Logger): The logger instance.
-        level (str): Log level: INFO, WARNING, ERROR, DEBUG.
+        level (str): Log level: INFO, WARNING (or WARN), ERROR, DEBUG.
         message (str): Main log message.
         master_run_id (str, optional): The global run ID for the entire pipeline.
         layer_run_id (str, optional): The run ID for the current pipeline layer.
         layer (str): The layer name for current pipeline run.
         **kwargs: Any extra metadata to include in the log (e.g., batch_id, source_path, rows).
     """
+    # Normalise the level before anything else.
+    #
+    # Python's logging module treats WARN as an alias for WARNING, and ten call
+    # sites in this codebase use that spelling. Every one of them was emitted at
+    # INFO, because an unmatched level fell through to logger.info() below - and
+    # a warning that reads as INFO is invisible, so nobody noticed.
+    level = (level or "").upper()
+    if level == "WARN":
+        level = "WARNING"
+
+    invalid_level = level not in ("INFO", "WARNING", "ERROR", "DEBUG")
+
     # Include layer inside metadata if provided
     metadata = kwargs.copy()
     if layer:
         metadata["layer"] = layer
 
+    if invalid_level:
+        # Do not let an unrecognised level disappear into INFO - that is exactly
+        # how the WARN downgrade went unnoticed for so long. Name the bad value
+        # so the offending call site is findable from the log itself. Logging
+        # must never fail a pipeline run, so this deliberately does not raise.
+        metadata["invalid_log_level"] = level
+
     # Add master_run_id and layer_run_id to metadata
     extra = {"metadata": metadata, "master_run_id": master_run_id, "layer_run_id": layer_run_id}
-    level = level.upper()
 
     if level == "INFO":
         logger.info(message, extra=extra)
-    elif level == "WARNING":
-        logger.warning(message, extra=extra)
     elif level == "ERROR":
         logger.error(message, extra=extra)
     elif level == "DEBUG":
         logger.debug(message, extra=extra)
     else:
-        logger.info(message, extra=extra)
+        # WARNING, plus anything unrecognised - which is flagged in the metadata
+        # above rather than silently downgraded.
+        logger.warning(message, extra=extra)
 
 # -----------------------------
 # Helper for Layer-Orchestrator Integration
