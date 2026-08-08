@@ -4,7 +4,7 @@ An end-to-end **lakehouse data platform** on Databricks Serverless: Medallion Ar
 
 **What makes this project different from most portfolio pipelines:**
 
-- **Tested like production software** — 87 unit tests against extracted pure functions, plus an end-to-end integration test that seeds dirty data, runs the *real* 18-task pipeline in an isolated environment, asserts every layer, verifies SCD2 change detection & idempotency across two loads, and always cleans up.
+- **Tested like production software** — 99 unit tests against extracted pure functions, plus an end-to-end integration test that seeds dirty data, runs the *real* 18-task pipeline in an isolated environment, asserts every layer, verifies SCD2 change detection & idempotency across two loads, and always cleans up.
 - **Git is the single source of truth** — every notebook, module, and YAML config is deployed by the bundle (`${workspace.file_path}` paths + runtime-derived `BUNDLE_ROOT`); nothing is hand-synced to the workspace.
 - **Data quality as routing, not filtering** — invalid rows are quarantined with named rule violations (`error_columns`), duplicates are audited, and a reconciliation invariant guarantees `bronze == silver + quarantine + audit` (nothing silently lost).
 
@@ -228,15 +228,20 @@ For CI/CD: set `DATABRICKS_HOST` and `DATABRICKS_TOKEN` as GitHub Actions secret
 
 ## Productionizing backlog
 
-Gaps I'm aware of and would close before running this at real scale — kept here deliberately, because knowing them is part of the engineering:
+Gaps I'm aware of and would close before running this at real scale — kept here deliberately, because knowing them is part of the engineering.
+
+Four of the defects found while tracing these shared one shape: **invalid input accepted and quietly reinterpreted rather than rejected.** A hyphenated job parameter was silently ignored; `dry_run` was honoured by one layer of seven while the DAG reported success; an unrecognised `run_mode` degraded to `incremental`; an unrecognised log level degraded to `INFO`, so roughly half the pipeline's warnings were recorded as INFO. Each failed *successfully*, which is precisely why none of them surfaced. Where they are now fixed, the code raises or warns instead of guessing.
 
 1. **Service principal for CI** — deploys currently authenticate with a personal access token; production should use an OAuth M2M service principal.
 2. **Unity Catalog grants** — no per-layer permission model yet (e.g., analysts read gold only).
 3. **Table maintenance** — handled by Unity Catalog **Predictive Optimization**, which is enabled at the metastore level, so `OPTIMIZE`/`VACUUM` run automatically on these managed tables (VACUUM at the 168-hour default, so time travel beyond ~7 days is already unavailable). The `optimize_*`/`vacuum_*` helpers in the frameworks predate that and are deliberately unwired — running them per-load would duplicate PO and pay compaction cost far more often than fragmentation is created. If data skipping ever became a concern, the route is Liquid Clustering (`CLUSTER BY`) on the gold tables, not a scheduled Z-ORDER job.
 4. **Schema-drift policy** — Auto Loader handles new columns (`addNewColumns`); downstream silver/gold contracts need an explicit evolution strategy.
-5. **Consistent environment pinning** — serverless environment version is pinned on some tasks and default on others; should be one pinned version everywhere.
-6. **Operational runbook** — replay/backfill is documented for operators in **[docs/BACKFILL_QUICK_REFERENCE.md](docs/BACKFILL_QUICK_REFERENCE.md)**: copy-paste commands, a pre-flight safety checklist, monitoring queries, troubleshooting, and worked scenarios. Still missing: on-call escalation and a freshness SLA check, which pair with the alert-routing item below.
+5. **Environment pinning** — all 18 tasks are pinned to a single serverless environment (`superstore_serverless_environment`, version 5). The remaining gap is a policy for *when* to bump it: pinning is only useful if it is total, and a partial pin is worse than none, because it converts a visible platform upgrade into an invisible divergence between tasks in the same run.
+6. **Operational runbook** — four run modes (`incremental` / `backfill` / `replay` / `full_refresh`) plus a pipeline-wide `dry_run` are documented for operators in **[docs/BACKFILL_QUICK_REFERENCE.md](docs/BACKFILL_QUICK_REFERENCE.md)**: how to choose a mode, copy-paste commands, a pre-flight safety checklist, monitoring queries, troubleshooting, and worked scenarios. Still missing: on-call escalation and a freshness SLA check, which pair with the alert-routing item below.
 7. **Alert routing** — failure emails exist; a real deployment would route to Slack/PagerDuty with a freshness SLA check.
+8. **Data-quality severity tiers** — every column is currently fatal: a malformed `postal_code` quarantines the whole customer row, and the facts referencing that customer then contribute nothing to the marts. Quarantine should mean *untrustworthy*, not *imperfect*. The fix is a severity map — business keys fatal, descriptive attributes nulled and flagged — but it restructures the reconciliation invariant, so at this scale it was measured, instrumented and documented rather than built. See **[docs/REFERENTIAL_COMPLETENESS.md](docs/REFERENTIAL_COMPLETENESS.md)**.
+9. **Retroactive dimension history** — a dimension change that happened in the past and arrives now is dated when the pipeline observed it, not when it occurred. Two independent blockers: the source carries no change timestamp, and Silver deduplicates to current state, so a historical version is classified as a duplicate and audited before Gold ever sees it. Closing this needs Silver to retain versions per entity — an architecture change, not a fix. See **[docs/SCD2_VALIDITY_DATING.md](docs/SCD2_VALIDITY_DATING.md)**.
+10. **Deduplication determinism** — Silver dedup is latest-arrival-wins on `bronze_ingestion_ts`. Duplicates within a single batch share that timestamp, so the ordering window ties and the surviving row is arbitrary rather than stable — the same input can produce different Silver contents on a re-run. A business-time tiebreak would fix it, but no entity carries a change timestamp: `order_date` is an attribute of the order, not a version marker, so two versions of one order hold the same value. With a CDC source this becomes ordering by commit time.
 
 ---
 
