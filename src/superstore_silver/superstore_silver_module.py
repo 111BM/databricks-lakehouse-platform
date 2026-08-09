@@ -173,6 +173,7 @@ from superstore_silver_transformations import (                                 
     classify_duplicates,
     row_hash,
     clean_string_columns,
+    standardize_values,
     add_error_columns,
     add_is_valid,
 )
@@ -390,6 +391,7 @@ def bronze_to_silver_prod(
     regex_cols: dict = {},
     date_cast_cols: dict = {},
     categorical_allowed_vals: dict = {},
+    value_standardization: dict = {},
     quarantine_table: str = None,
     shuffle_partitions: int = 200,
     metrics_table: str=None,
@@ -549,6 +551,16 @@ def bronze_to_silver_prod(
             # Step 2: Clean columns (trim + strip quotes) — extracted, unit-tested
             # -------------------------------
             clean_df = clean_string_columns(df, business_columns)
+
+            # -------------------------------
+            # Step 2b: Conform known source dialects BEFORE validating
+            # -------------------------------
+            # A source writing "OFF" for "Office Supplies" is not sending bad
+            # data, so this must run ahead of the DQ rules -- validating first
+            # quarantined 50,264 products on `category` and orphaned their
+            # facts from every mart. Unmapped values are untouched and still
+            # face the rules below.
+            clean_df = standardize_values(clean_df, value_standardization)
 
 
             # -------------------------------

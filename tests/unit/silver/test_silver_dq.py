@@ -40,6 +40,7 @@ from superstore_silver_transformations import (
     add_error_columns,
     add_is_valid,
     clean_string_columns,
+    standardize_values,
 )
 
 
@@ -64,6 +65,34 @@ class TestSilverConfigParsing:
     def test_orders_has_regex_for_both_date_columns(self, table_configs):
         regex_cols = table_configs["orders"]["regex_cols"]
         assert set(regex_cols) == {"order_date", "ship_date"}
+
+    def test_products_category_mapping_keys_are_strings_not_booleans(self, table_configs):
+        """
+        YAML 1.1 reads a bare OFF as the boolean False. Unquoted, this mapping
+        loads, deploys and runs without error while never matching a single one
+        of the 16,837 "OFF" rows it exists to translate.
+
+        Pins the parsed type, because the failure is invisible at every other
+        layer -- the config looks right and the pipeline reports success.
+        """
+        mapping = table_configs["products"]["value_standardization"]["category"]
+
+        assert all(isinstance(k, str) for k in mapping), (
+            f"non-string keys parsed from YAML: "
+            f"{[(k, type(k).__name__) for k in mapping if not isinstance(k, str)]}"
+        )
+        assert set(mapping) == {"OFF", "TEC", "FUR"}
+
+    def test_every_standardized_value_is_an_allowed_category(self, table_configs):
+        # A mapping that translates into a value the rules still reject would
+        # quarantine the row anyway -- silently, and for a different reason.
+        products = table_configs["products"]
+        mapping = products["value_standardization"]["category"]
+        allowed = set(products["categorical_allowed_vals"]["category"])
+
+        assert set(mapping.values()) <= allowed, (
+            f"maps to values outside the allowed set: {set(mapping.values()) - allowed}"
+        )
 
     def test_all_regex_patterns_compile(self, table_configs):
         for table, tcfg in table_configs.items():
@@ -284,3 +313,99 @@ class TestDataQualityRouting:
 
         assert buckets.get(True, 0) == 2
         assert buckets.get(False, 0) == 0
+
+
+@pytest.mark.unit
+class TestValueStandardization:
+    """
+    standardize_values runs BEFORE the DQ rules, translating known source
+    dialects into the canonical vocabulary.
+
+    It exists because the products feed emits three-letter category codes
+    ("OFF") alongside full labels ("Office Supplies"). Validating first treated
+    the codes as invalid and quarantined 50,264 products, whose facts then
+    contributed nothing to any mart. The codes are the same fact in a different
+    dialect, so translating beats rejecting -- and beats substituting
+    "Unknown", which would return the revenue while destroying a category that
+    was never unknown.
+    """
+
+    def _products(self, spark, rows):
+        return spark.createDataFrame(rows, ["product_id", "category"])
+
+    MAPPING = {"category": {"OFF": "Office Supplies", "TEC": "Technology", "FUR": "Furniture"}}
+    ALLOWED = {"category": ["Furniture", "Office Supplies", "Technology"]}
+
+    def test_codes_become_canonical_labels(self, spark):
+        df = self._products(spark, [("P1", "OFF"), ("P2", "TEC"), ("P3", "FUR")])
+
+        out = standardize_values(df, self.MAPPING)
+
+        assert sorted(r["category"] for r in out.collect()) == [
+            "Furniture", "Office Supplies", "Technology",
+        ]
+
+    def test_standardized_rows_then_pass_validation(self, spark):
+        # THE POINT. A row that was quarantined must now reach Silver, with its
+        # real category rather than a placeholder.
+        df = self._products(spark, [("P1", "OFF")])
+
+        out = add_is_valid(add_error_columns(
+            standardize_values(df, self.MAPPING),
+            ["product_id", "category"], {}, self.ALLOWED,
+        ))
+
+        row = out.first()
+        assert row["is_valid"] is True
+        assert row["category"] == "Office Supplies"
+
+    def test_already_canonical_values_are_untouched(self, spark):
+        df = self._products(spark, [("P1", "Office Supplies"), ("P2", "Technology")])
+
+        out = standardize_values(df, self.MAPPING)
+
+        assert [r["category"] for r in out.collect()] == ["Office Supplies", "Technology"]
+
+    def test_unmapped_values_are_left_to_fail_validation(self, spark):
+        # Standardization must not become a catch-all that hides bad data. An
+        # unrecognised value passes through untouched and is still quarantined.
+        df = self._products(spark, [("P1", "Nordwest")])
+
+        out = add_is_valid(add_error_columns(
+            standardize_values(df, self.MAPPING),
+            ["product_id", "category"], {}, self.ALLOWED,
+        ))
+
+        row = out.first()
+        assert row["is_valid"] is False
+        assert row["category"] == "Nordwest"  # not coerced to a nearest match
+
+    def test_nulls_are_not_mapped(self, spark):
+        # A null category is genuinely missing, not a dialect. It stays null and
+        # stays invalid -- recovering it is the severity-tier work, not this.
+        # Explicit schema: Spark cannot infer a type for an all-null column.
+        from pyspark.sql.types import StringType, StructField, StructType
+
+        schema = StructType([
+            StructField("product_id", StringType(), True),
+            StructField("category", StringType(), True),
+        ])
+        df = spark.createDataFrame([("P1", None)], schema)
+
+        out = standardize_values(df, self.MAPPING)
+
+        assert out.first()["category"] is None
+
+    def test_empty_or_missing_mapping_is_a_no_op(self, spark):
+        df = self._products(spark, [("P1", "OFF")])
+
+        for mapping in (None, {}, {"nonexistent_col": {"a": "b"}}):
+            assert standardize_values(df, mapping).first()["category"] == "OFF"
+
+    def test_mapping_is_exact_match_not_prefix_or_case_insensitive(self, spark):
+        # "off" and "OFFICE" must not be swept up by the "OFF" rule.
+        df = self._products(spark, [("P1", "off"), ("P2", "OFFICE")])
+
+        out = standardize_values(df, self.MAPPING)
+
+        assert [r["category"] for r in out.collect()] == ["off", "OFFICE"]

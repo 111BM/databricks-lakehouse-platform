@@ -70,6 +70,60 @@ def clean_string_columns(df: DataFrame, columns: list) -> DataFrame:
     return clean_df
 
 
+def standardize_values(df: DataFrame, value_standardization: dict = None) -> DataFrame:
+    """
+    Translate known source dialects to the canonical vocabulary, BEFORE the
+    data-quality rules run.
+
+    Why this is not a data-quality repair
+    -------------------------------------
+    A source that writes "OFF" where the contract says "Office Supplies" has
+    not sent bad data — it has sent the same fact in a different dialect. The
+    correct value is fully recoverable, so translating it is *conformance*, and
+    the row should reach Silver with its real category.
+
+    Treating it as a DQ failure instead is what caused 50,264 products to be
+    quarantined on `category` alone, which in turn orphaned 49,539 fact rows
+    (~5% of revenue) from the marts — see docs/REFERENTIAL_COMPLETENESS.md.
+    Substituting "Unknown" would have returned the revenue while destroying a
+    category that was never actually unknown.
+
+    Deliberately exact-match, not fuzzy
+    ----------------------------------
+    Only values listed in the mapping are translated. Anything else passes
+    through untouched and still faces the categorical/regex rules, so an
+    unrecognised value is rejected loudly rather than coerced into whichever
+    canonical value looks closest. Adding a dialect is a config change, which
+    is the same contract the rest of the DQ rules follow.
+
+    No flag column is written. The mapping is deterministic, lossless and
+    declared in config, and Bronze retains the value as received — unlike a
+    repair, nothing is lost that a reader would need to know about.
+
+    Args:
+        df: Input DataFrame (already cleaned).
+        value_standardization: {column: {source_value: canonical_value}}.
+
+    Returns:
+        DataFrame with mapped values replaced. Unmapped values unchanged.
+    """
+    if not value_standardization:
+        return df
+
+    out = df
+    for column, mapping in value_standardization.items():
+        if column not in out.columns or not mapping:
+            continue
+
+        expr_col = col(column)
+        for source_value, canonical_value in mapping.items():
+            expr_col = when(col(column) == lit(source_value), lit(canonical_value)).otherwise(expr_col)
+
+        out = out.withColumn(column, expr_col)
+
+    return out
+
+
 def add_error_columns(
     df: DataFrame,
     business_columns: list,

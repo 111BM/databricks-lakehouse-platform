@@ -54,6 +54,19 @@ silver_table_configs:
         - Furniture
         - Office Supplies
         - Technology
+    # Source dialect -> canonical vocabulary, applied BEFORE the rules above.
+    # The feed emits three-letter category codes alongside full labels; treating
+    # the codes as invalid quarantined 50,264 products and orphaned their facts
+    # from every mart (docs/REFERENTIAL_COMPLETENESS.md). These are the same
+    # fact in a different dialect, not bad data, so they are translated rather
+    # than rejected. Exact match only — anything unlisted still faces the rules.
+    # Keys MUST stay quoted: YAML 1.1 reads a bare OFF as the boolean false,
+    # which turns this mapping into a key that can never match a string column.
+    value_standardization:
+      category:
+        "OFF": Office Supplies
+        "TEC": Technology
+        "FUR": Furniture
     metrics_table: silver_layer_metrics
     layer_name: silver
     business_columns:
