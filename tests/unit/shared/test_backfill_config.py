@@ -44,6 +44,7 @@ from superstore_backfill_utils import (
     get_backfill_config,
     is_dry_run,
     reads_from_source,
+    reprocessed_scope_predicate,
 )
 
 
@@ -250,3 +251,72 @@ class TestDryRunIsOrthogonal:
         assert is_dry_run(make_dbutils({"dry_run": "false"})) is False
         assert is_dry_run(make_dbutils({})) is False
         assert is_dry_run(make_dbutils({"run_mode": "full_refresh", "dry_run": "true"})) is True
+
+
+@pytest.mark.unit
+class TestReprocessedScopePredicate:
+    """
+    Quarantine and audit are appended to, while Silver is merged. Append is
+    only safe for a mode that never re-reads a Bronze row. Every other mode
+    appended a SECOND copy of each dirty/duplicate row, so the tables grew by
+    a full copy per replay and `bronze == silver + quarantine + audit`
+    over-counted.
+
+    reprocessed_scope_predicate names the rows about to be re-derived, so they
+    can be deleted before the append. Its scope must mirror exactly what
+    get_incremental_with_backfill re-reads for the same mode — these tests pin
+    that correspondence.
+    """
+
+    def test_incremental_clears_nothing(self, make_dbutils):
+        # Watermarked: it only ever reads rows past the target's max
+        # timestamp, so there is no prior copy to replace.
+        config = get_backfill_config(make_dbutils({"run_mode": "incremental"}))
+        assert reprocessed_scope_predicate(config) is None
+
+    def test_missing_config_is_treated_as_incremental(self):
+        # Defensive: a caller that has no config must not delete anything.
+        assert reprocessed_scope_predicate({}) is None
+        assert reprocessed_scope_predicate(None) is None
+
+    def test_full_refresh_clears_everything(self, make_dbutils):
+        config = get_backfill_config(
+            make_dbutils({"run_mode": "full_refresh"}), allow_full_refresh=True
+        )
+        assert reprocessed_scope_predicate(config) == "true"
+
+    def test_windowed_modes_clear_exactly_their_window(self, make_dbutils):
+        for mode in ("backfill", "replay"):
+            config = get_backfill_config(make_dbutils({
+                "run_mode": mode,
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-31",
+            }))
+            predicate = reprocessed_scope_predicate(config)
+            assert predicate == (
+                "to_date(bronze_ingestion_ts) BETWEEN '2026-01-01' AND '2026-01-31'"
+            ), mode
+
+    def test_window_bounds_are_inclusive_both_ends(self, make_dbutils):
+        # BETWEEN is inclusive, and the read filter uses >= / <=. If this
+        # drifted to an exclusive bound, a replay would leave a stale copy of
+        # the boundary day behind.
+        config = get_backfill_config(make_dbutils({
+            "run_mode": "replay",
+            "start_date": "2026-03-05",
+            "end_date": "2026-03-05",
+        }))
+        predicate = reprocessed_scope_predicate(config)
+        assert "BETWEEN '2026-03-05' AND '2026-03-05'" in predicate
+
+    def test_ingestion_column_is_configurable(self, make_dbutils):
+        # The derived tables carry bronze_ingestion_ts, not the ingestion_date
+        # column the read filters on. Callers must be able to name the column
+        # that actually exists on the table being cleared.
+        config = get_backfill_config(make_dbutils({
+            "run_mode": "replay",
+            "start_date": "2026-01-01",
+            "end_date": "2026-01-02",
+        }))
+        predicate = reprocessed_scope_predicate(config, ingestion_col="audit_ts")
+        assert predicate.startswith("to_date(audit_ts) BETWEEN")

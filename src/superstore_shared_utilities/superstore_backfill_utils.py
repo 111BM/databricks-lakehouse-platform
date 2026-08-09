@@ -256,6 +256,57 @@ def run_mode_load_type(backfill_config: Dict, default: str) -> str:
     return default if mode == "incremental" else mode.upper()
 
 
+def reprocessed_scope_predicate(
+    backfill_config: Dict,
+    ingestion_col: str = "bronze_ingestion_ts",
+) -> Optional[str]:
+    """
+    SQL predicate matching the rows a run is about to RE-derive, or None when
+    it derives only rows that have never been seen.
+
+    Why this exists
+    ---------------
+    Silver merges into the silver table (idempotent), but appends to the
+    quarantine and audit tables. Append is correct for incremental, which only
+    ever reads bronze rows past the watermark. It is wrong for every mode that
+    re-reads rows already processed: a replay appends a second copy of each
+    dirty row, so `bronze == silver + quarantine + audit` over-counts and the
+    tables grow by a full copy per replay.
+
+    Deleting this predicate's rows before appending makes those writes
+    idempotent, because the scope mirrors exactly what
+    `get_incremental_with_backfill` re-reads for the same mode:
+
+      incremental   -> None      (watermarked; nothing is re-read)
+      backfill      -> the window
+      replay        -> the window
+      full_refresh  -> everything
+
+    The window predicate uses `to_date(ingestion_col)` rather than the
+    `ingestion_date` column the read filters on, because the derived tables do
+    not carry `ingestion_date`. The two are equivalent by construction —
+    Bronze sets `ingestion_date = to_date(bronze_ingestion_ts)`.
+
+    Args:
+        backfill_config: Config from get_backfill_config().
+        ingestion_col: Timestamp column present on the derived table.
+
+    Returns:
+        A SQL WHERE-clause fragment, or None when nothing needs clearing.
+    """
+    mode = backfill_config.get("mode", "incremental") if backfill_config else "incremental"
+
+    if mode == "full_refresh":
+        return "true"
+
+    if mode in WINDOWED_MODES:
+        start = backfill_config["start_date"].strftime("%Y-%m-%d")
+        end = backfill_config["end_date"].strftime("%Y-%m-%d")
+        return f"to_date({ingestion_col}) BETWEEN '{start}' AND '{end}'"
+
+    return None
+
+
 def get_incremental_with_backfill(
     spark,
     source_table: str,

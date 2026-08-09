@@ -166,6 +166,7 @@ from superstore_logger import get_superstore_logger, log_event          # Custom
 from superstore_platform_constants import SILVER_LAYER                  # Layer constant for Silver pipeline
 from superstore_backfill_utils import (                                 # run-mode support
     get_incremental_with_backfill,
+    reprocessed_scope_predicate,
     run_mode_load_type
 )
 from superstore_silver_transformations import (                                    # pure logic (unit-tested)
@@ -300,6 +301,78 @@ logger_silver = get_superstore_logger("superstore_silver_module")
 #     return incremental_df
 
 # -------------------------------
+# Derived-table write (quarantine / audit)
+# -------------------------------
+def write_derived_table(
+    spark,
+    df,
+    table: str,
+    backfill_config: dict,
+    what: str,
+    master_run_id: str,
+    layer_run_id: str,
+) -> None:
+    """
+    Append `df` to a derived Delta table, clearing anything this run is about
+    to re-derive first.
+
+    Quarantine and audit are pure functions of the Bronze rows read for this
+    run, so re-reading those rows must REPLACE their derived output, not add a
+    second copy. Plain append is only safe for incremental, which never
+    re-reads. Under replay / backfill / full_refresh it duplicated every dirty
+    and duplicate row, inflating both tables by a full copy per run and
+    breaking `bronze == silver + quarantine + audit`.
+
+    Silver itself does not need this — it MERGEs on the row hash, so it was
+    already idempotent. These two tables were the gap.
+
+    The delete runs before the append and is scoped by
+    `reprocessed_scope_predicate` to exactly the rows the read re-read.
+    """
+    if not table:
+        return
+
+    if not spark.catalog.tableExists(table):
+        (df.limit(0)
+           .write
+           .format("delta")
+           .mode("overwrite")
+           .option("overwriteSchema", "true")
+           .saveAsTable(table))
+
+        log_event(
+            logger_silver, "INFO", f"Created {what} table with schema",
+            table=table, master_run_id=master_run_id,
+            layer_run_id=layer_run_id, layer=SILVER_LAYER,
+        )
+    else:
+        predicate = reprocessed_scope_predicate(backfill_config)
+        if predicate:
+            # Idempotency, not cleanup: these rows are about to be rewritten
+            # from the same Bronze input they were derived from.
+            spark.sql(f"DELETE FROM {table} WHERE {predicate}")
+
+            log_event(
+                logger_silver, "INFO",
+                f"Cleared re-derived scope from {what} before append",
+                table=table, scope_predicate=predicate,
+                master_run_id=master_run_id, layer_run_id=layer_run_id,
+                layer=SILVER_LAYER,
+            )
+
+    (df.write
+       .format("delta")
+       .mode("append")
+       .saveAsTable(table))
+
+    log_event(
+        logger_silver, "INFO", f"Rows appended to {what} table",
+        table=table, master_run_id=master_run_id,
+        layer_run_id=layer_run_id, layer=SILVER_LAYER,
+    )
+
+
+# -------------------------------
 # Bronze → Silver ETL
 # -------------------------------
 def bronze_to_silver_prod(
@@ -333,10 +406,13 @@ def bronze_to_silver_prod(
         - Regex validations
         - Categorical allowed values
     4. Separate good vs dirty rows.
-    5. Quarantine dirty rows (Delta merge) using entity-specific hash column.
+    5. Quarantine dirty rows, tagged with an entity-specific hash column.
     6. Cast numeric columns for Silver.
     7. Deduplicate Silver and identify duplicates using entity-specific hash columns.
-    8. Update Silver and audit tables using Delta merges.
+    8. Update Silver by Delta merge; write quarantine and audit via
+       write_derived_table, which clears the scope this run re-derives before
+       appending. Silver is idempotent through its merge key; the other two
+       are idempotent through that scoped delete.
     9. Log metrics (total, dedup %, duplicates %).
     """
 
@@ -614,49 +690,16 @@ def bronze_to_silver_prod(
                     .withColumn("quarantine_ingestion_ts", current_timestamp())  # Add timestamp for tracking
                 )
     
-                # Append into quarantine table
-                if quarantine_table:
-                    # -----------------------------------
-                    # STEP 1: Create table if NOT exists
-                    # -----------------------------------
-                    if not spark.catalog.tableExists(quarantine_table):
-
-                        (dirty_rows_df
-                            .limit(0)
-                            .write
-                            .format("delta")
-                            .mode("overwrite")
-                            .option("overwriteSchema", "true")
-                            .saveAsTable(quarantine_table)
-                        )
-
-                        log_event(
-                            logger_silver,
-                            "INFO",
-                            "Created quarantine table with schema",
-                            master_run_id=master_run_id,
-                            layer_run_id=layer_run_id,
-                            layer=SILVER_LAYER
-                        )
-
-                    # -----------------------------------
-                    # STEP 2: Append dirty rows
-                    # -----------------------------------
-                    (dirty_rows_df
-                        .write
-                        .format("delta")
-                        .mode("append")
-                        .saveAsTable(quarantine_table)
-                    )
-
-                    log_event(
-                        logger_silver,
-                        "INFO",
-                        "Dirty rows appended to quarantine table",
-                        master_run_id=master_run_id,
-                        layer_run_id=layer_run_id,
-                        layer=SILVER_LAYER
-                    )
+                # Write into quarantine table (re-derived scope cleared first)
+                write_derived_table(
+                    spark,
+                    dirty_rows_df,
+                    quarantine_table,
+                    backfill_config,
+                    "quarantine",
+                    master_run_id,
+                    layer_run_id,
+                )
 
 
             # -------------------------------
@@ -921,49 +964,16 @@ def bronze_to_silver_prod(
                     .repartition(shuffle_partitions, col(duplicate_col))
                 )
 
-                # Append into audit table
-                if audit_table:
-                    # -----------------------------------
-                    # STEP 1: Create audit table if NOT exists
-                    # -----------------------------------
-                    if not spark.catalog.tableExists(audit_table):
-
-                        (silver_dup_df
-                            .limit(0)
-                            .write
-                            .format("delta")
-                            .mode("overwrite")
-                            .option("overwriteSchema", "true")
-                            .saveAsTable(audit_table)
-                        )
-
-                        log_event(
-                            logger_silver,
-                            "INFO",
-                            "Created audit table with schema",
-                            master_run_id=master_run_id,
-                            layer_run_id=layer_run_id,
-                            layer=SILVER_LAYER
-                        )
-
-                    # -----------------------------------
-                    # STEP 2: Append duplicate rows
-                    # -----------------------------------
-                    (silver_dup_df
-                        .write
-                        .format("delta")
-                        .mode("append")
-                        .saveAsTable(audit_table)
-                    )
-
-                    log_event(
-                        logger_silver,
-                        "INFO",
-                        "Duplicate rows appended to audit table",
-                        master_run_id=master_run_id,
-                        layer_run_id=layer_run_id,
-                        layer=SILVER_LAYER
-                    )
+                # Write into audit table (re-derived scope cleared first)
+                write_derived_table(
+                    spark,
+                    silver_dup_df,
+                    audit_table,
+                    backfill_config,
+                    "audit",
+                    master_run_id,
+                    layer_run_id,
+                )
 
 
             # -------------------------------
