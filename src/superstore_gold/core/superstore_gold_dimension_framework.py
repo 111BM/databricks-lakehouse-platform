@@ -203,6 +203,53 @@ logger_gold_dimensional = get_superstore_logger("superstore_gold_dimension_frame
     
 #     return incremental_df
 
+
+# The clock a windowed run selects on. Bronze ingestion time, matching what
+# Silver filters on and what the facts framework already used, so one window
+# means one thing at every layer.
+WINDOW_TS_COL = "bronze_ingestion_ts"
+
+
+def apply_window_filter(df, start_date, end_date, window_ts_col: str = WINDOW_TS_COL):
+    """
+    Restrict a Silver frame to the run's window, deriving `ingestion_date` from
+    `window_ts_col` because Silver tables do not carry that column.
+
+    Pure: a DataFrame in, a DataFrame out. Extracted from
+    get_incremental_silver_for_dims so the selection can be unit tested without
+    a catalog -- it is the piece that silently selected nothing for two run
+    modes, and no test could reach it while it was welded inside an I/O path.
+
+    Bounds are inclusive at both ends, matching the Silver-side read.
+
+    Bounds are formatted to "YYYY-MM-DD" strings rather than passed as datetime
+    objects, again matching Silver. A naive datetime literal is converted from
+    the DRIVER's timezone while the derived date is rendered in the SESSION
+    timezone, so comparing against one could shift the window by a day whenever
+    those differ -- reintroducing the very misalignment this function exists to
+    remove. A date string has no timezone to convert.
+
+    Args:
+        df: Silver frame.
+        start_date / end_date: window bounds (date or datetime).
+        window_ts_col: timestamp column the window applies to.
+
+    Returns:
+        Filtered frame, with the derived `ingestion_date` column retained
+        (downstream selects columns by name, so the extra column is inert).
+    """
+    start = start_date.strftime("%Y-%m-%d")
+    end = end_date.strftime("%Y-%m-%d")
+
+    return (
+        df.withColumn("ingestion_date", to_date(col(window_ts_col)))
+          .filter(
+              (col("ingestion_date") >= lit(start)) &
+              (col("ingestion_date") <= lit(end))
+          )
+    )
+
+
 def get_incremental_silver_for_dims(
     spark, 
     silver_table: str, 
@@ -227,11 +274,20 @@ def get_incremental_silver_for_dims(
     Backfill and replay read identically here; they differ only at Bronze,
     which a replay skips entirely.
     
-    Key Fix for Dimension Tables:
-    - Dimension tables don't have ingestion_date column
-    - They only have bronze_ingestion_ts and silver_ingestion_ts
-    - This function derives ingestion_date from silver_ingestion_ts for windowed runs
-    - Uses SILVER (not bronze) timestamp because SCD2 logic tracks dimension changes at Silver layer
+    Windowed runs and the choice of clock:
+    - The Silver table has no ingestion_date column, so one is derived below.
+    - It is derived from bronze_ingestion_ts, matching what Silver filters on
+      and what the facts framework already used. The window then means one
+      thing at every layer: "rows whose data was ingested to Bronze in this
+      period".
+    - This previously derived from silver_ingestion_ts, on the reasoning that
+      SCD2 tracks dimension changes at the Silver layer. That reasoning
+      conflated two separate questions -- when a version is *dated* (see
+      docs/SCD2_VALIDITY_DATING.md) and which rows a run *re-derives* -- and
+      made replay structurally impossible for dimensions: a replay always
+      rewrites Silver with a timestamp of now, which can never fall inside a
+      historical window. Silver updated, Gold silently did not.
+      See docs/GOLD_WINDOW_ALIGNMENT.md.
     """
     
     log_event(
@@ -258,20 +314,15 @@ def get_incremental_silver_for_dims(
             log_event(
                 logger_gold_dimensional,
                 "INFO",
-                f"Dimension table missing ingestion_date column - deriving from silver_ingestion_ts",
+                f"Dimension table missing ingestion_date column - deriving from {WINDOW_TS_COL}",
                 master_run_id=master_run_id,
                 layer_run_id=layer_run_id,
                 layer=GOLD_LAYER
             )
-            
-            # Derive ingestion_date from silver_ingestion_ts (NOT bronze!)
-            # Dimensions track changes at Silver layer due to SCD2 processing
-            df_silver = df_silver.withColumn("ingestion_date", to_date(col("silver_ingestion_ts")))
-            
-            # Apply date range filter manually since we derived the column
+
             start_date = backfill_config.get("start_date")
             end_date = backfill_config.get("end_date")
-            
+
             log_event(
                 logger_gold_dimensional,
                 "INFO",
@@ -280,14 +331,8 @@ def get_incremental_silver_for_dims(
                 layer_run_id=layer_run_id,
                 layer=GOLD_LAYER
             )
-            
-            # Apply date filter
-            df_filtered = df_silver.filter(
-                (col("ingestion_date") >= lit(start_date)) & 
-                (col("ingestion_date") <= lit(end_date))
-            )
-            
-            return df_filtered
+
+            return apply_window_filter(df_silver, start_date, end_date)
     
     # For incremental mode or full_refresh, use the standard utility
     # (it handles watermark logic and full table reads)
