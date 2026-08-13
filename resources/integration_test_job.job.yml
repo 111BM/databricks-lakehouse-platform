@@ -114,10 +114,80 @@ resources:
               helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
           environment_key: integration_test_environment
 
-        # 6. Always clean up (even if an assertion failed)
-        - task_key: cleanup
+        # 6. Replay leg. The suite ran `incremental` only, so every windowed-mode
+        #    defect was invisible to it — an append-only quarantine that doubled
+        #    on every replay, and a Gold dimension window on the wrong clock that
+        #    selected zero rows and reported success. Both were green in CI.
+        #
+        #    The window is derived from the ingested data and passed as a task
+        #    value, not hard-coded: the seed lands "now", so a fixed or
+        #    job-start date would quietly miss if a run crossed midnight UTC.
+        #    Two replays, not one. Idempotency is a replay-vs-replay property:
+        #    a replay processes the window as ONE batch where the incremental
+        #    loads used several, so it legitimately reclassifies rows between
+        #    Silver and audit (the sum is preserved, the partition is not).
+        #    Comparing a replay against the incremental state fails on correct
+        #    behaviour — the first version of this leg did exactly that.
+        - task_key: snapshot_before_replay
           depends_on:
             - task_key: assert_scd2_change
+          notebook_task:
+            notebook_path: ${workspace.file_path}/tests/integration_databricks/03_snapshot_before_replay
+            source: WORKSPACE
+            base_parameters:
+              helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
+              phase: "incremental"
+          environment_key: integration_test_environment
+
+        - task_key: run_pipeline_replay_1
+          depends_on:
+            - task_key: snapshot_before_replay
+          run_job_task:
+            job_id: ${resources.jobs.superstore_data_platform.id}
+            job_parameters:
+              SUPERSTORE_ENV: "integration_test"
+              run_mode: "replay"
+              start_date: "{{tasks.snapshot_before_replay.values.replay_start}}"
+              end_date: "{{tasks.snapshot_before_replay.values.replay_end}}"
+              dry_run: "false"
+
+        - task_key: snapshot_after_replay_1
+          depends_on:
+            - task_key: run_pipeline_replay_1
+          notebook_task:
+            notebook_path: ${workspace.file_path}/tests/integration_databricks/03_snapshot_before_replay
+            source: WORKSPACE
+            base_parameters:
+              helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
+              phase: "replay_1"
+          environment_key: integration_test_environment
+
+        - task_key: run_pipeline_replay_2
+          depends_on:
+            - task_key: snapshot_after_replay_1
+          run_job_task:
+            job_id: ${resources.jobs.superstore_data_platform.id}
+            job_parameters:
+              SUPERSTORE_ENV: "integration_test"
+              run_mode: "replay"
+              start_date: "{{tasks.snapshot_before_replay.values.replay_start}}"
+              end_date: "{{tasks.snapshot_before_replay.values.replay_end}}"
+              dry_run: "false"
+
+        - task_key: assert_replay
+          depends_on:
+            - task_key: run_pipeline_replay_2
+          notebook_task:
+            notebook_path: ${workspace.file_path}/tests/integration_databricks/assert_replay
+            source: WORKSPACE
+            base_parameters:
+              helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
+          environment_key: integration_test_environment
+
+        # 7. Always clean up (even if an assertion failed)
+        - task_key: cleanup
+          depends_on:
+            - task_key: assert_replay
           run_if: ALL_DONE
           notebook_task:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/04_cleanup_integration

@@ -4,7 +4,10 @@
 # Runs AFTER deploy.yml successfully deploys QA. Tests the real pipeline
 # end-to-end: Bronze → Silver → Gold with assertions at each layer.
 #
-# Runtime: ~20-35 minutes on Databricks (measured 2026-08-13: 16m, 21m, 22m, 34m).
+# Runtime: ~50-55 minutes on Databricks. The replay leg (two extra full pipeline
+# runs, needed because idempotency is a replay-vs-replay property) more than
+# doubled the suite: measured 16m/21m/22m/34m before it, 52m after.
+#
 # The job timeout below must stay comfortably above the top of that range: when
 # it trips, GitHub cancels the job while the Databricks run carries on, and the
 # build goes red for the clock rather than for a fault.
@@ -26,7 +29,7 @@ jobs:
   integration-tests:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60  # Safety: prevent hung jobs. See runtime note above.
+    timeout-minutes: 90  # Safety: prevent hung jobs. See runtime note above.
     
     env:
       DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
