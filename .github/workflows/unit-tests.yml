@@ -44,12 +44,16 @@ jobs:
       # Run tests with coverage (shows PR author what's tested)
       - name: Run unit tests
         run: |
+          # No -m filter, deliberately. deploy.yml's gate runs this same
+          # directory unfiltered, so a marker here would mean the two gates run
+          # different sets and a PR could pass a check the merge then fails.
+          # The directory already scopes this to unit tests; a marker would only
+          # add a way for an unmarked test to be silently skipped.
           pytest tests/unit/ -v \
             --junitxml=test-results.xml \
             --cov=src \
             --cov-report=xml \
-            --cov-report=term-missing \
-            -m unit
+            --cov-report=term-missing
 
       - name: Upload test results
         if: always()
