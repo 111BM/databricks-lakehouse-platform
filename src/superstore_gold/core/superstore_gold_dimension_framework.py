@@ -77,7 +77,9 @@ from pyspark.sql.functions import (
     hash as hash_fn,     # alias for clarity in some transformations
     max as spark_max,    # Spark-safe max aggregation
     spark_partition_id,   # used for partition-level skew analysis
-    to_date
+    to_date,
+    when,                # conditional substitution of untrusted attributes
+    array_contains       # test membership of Silver's repaired_columns flags
 )
 
 # -------------------------------
@@ -253,13 +255,14 @@ def apply_window_filter(df, start_date, end_date, window_ts_col: str = WINDOW_TS
 DIMENSION_PLACEHOLDER = "Unknown"
 
 
-def substitute_missing_attributes(
+def substitute_untrusted_attributes(
     df,
     attribute_columns,
     placeholder: str = DIMENSION_PLACEHOLDER,
 ):
     """
-    Fill null dimension attributes with a descriptive placeholder.
+    Replace dimension attributes that cannot be trusted with a descriptive
+    placeholder — both those that are MISSING and those that are INVALID.
 
     Kimball's rule: a dimension attribute is never NULL. Nulls behave badly in
     group-bys (the bucket renders inconsistently or vanishes), in joins, and in
@@ -296,11 +299,22 @@ def substitute_missing_attributes(
     string_cols = {
         f.name for f in df.schema.fields if isinstance(f.dataType, StringType)
     }
+    has_flags = "repaired_columns" in df.columns
 
     out = df
     for c in attribute_columns:
-        if c in string_cols:
-            out = out.withColumn(c, coalesce(col(c), lit(placeholder)))
+        if c not in string_cols:
+            continue
+
+        # Null is not the only untrustworthy state. A categorical violation like
+        # segment='Premium' is PRESENT and wrong, so coalesce leaves it alone and
+        # it reaches the dimension looking like a legitimate value. Silver already
+        # named it in repaired_columns; substitute on that, not on null-ness.
+        untrusted = col(c).isNull()
+        if has_flags:
+            untrusted = untrusted | array_contains(col("repaired_columns"), c)
+
+        out = out.withColumn(c, when(untrusted, lit(placeholder)).otherwise(col(c)))
 
     return out
 
@@ -552,7 +566,7 @@ def prepare_scd2_columns(
         attribute_columns = [
             c for c in entity_columns if c not in set(natural_keys or [])
         ]
-        silver_df = substitute_missing_attributes(silver_df, attribute_columns)
+        silver_df = substitute_untrusted_attributes(silver_df, attribute_columns)
 
         df = silver_df.withColumn("effective_from", col("silver_ingestion_ts"))
 

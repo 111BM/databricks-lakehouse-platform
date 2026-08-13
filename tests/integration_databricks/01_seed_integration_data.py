@@ -34,9 +34,11 @@ for p in [RAW_PATH, SCHEMA_LOCATION, CHECKPOINT_LOCATION]:
 # Scenarios encoded:
 #   - clean rows                          -> Silver
 #   - blank Customer ID                   -> quarantine (null business key)
-#   - invalid Segment "Premium" + Region  -> quarantine (categorical rules);
-#     AA-10480's order is also ship-before-order, so the order is quarantined too
-#     and the fact table never references a customer missing from the dimension.
+#   - invalid Segment "Premium" + Region  -> Silver, flagged in repaired_columns,
+#     substituted to 'Unknown' at Gold. Business key is intact, and only keys are
+#     fatal under severity tiers (docs/SEVERITY_TIERS.md). This row used to be
+#     quarantined outright, which is exactly the behaviour that stranded its facts.
+#     AA-10480's order is separately ship-before-order, so the order is quarantined.
 #   - Ship Date before Order Date         -> quarantine (business rule)
 #   - duplicate Order ID/Product ID       -> audit (older loses to newer)
 SEED_CSV = """Row ID,Order ID,Order Date,Ship Date,Ship Mode,Customer ID,Customer Name,Segment,Country,City,State,Postal Code,Region,Product ID,Category,Sub-Category,Product Name,Sales,Quantity,Discount,Profit

@@ -26,12 +26,23 @@ whole backlog is about.
 proceeds). It does **not** modify the value — Silver stays diffable against Bronze, and
 no `_raw` preservation column is needed because nothing was overwritten.
 
-**Gold substitutes.** `substitute_missing_attributes` fills nulls when the dimension is
-built, so completeness is guaranteed *by construction*: a dimension row cannot be
-written with a null attribute, because the step that writes it fills them. Substituting
-in Silver instead would rely on the tier config staying in sync with the dimension
-config, with nothing enforcing it. `'Unknown'` is also a presentation decision, and Gold
-is the presentation layer.
+**Gold substitutes.** `substitute_untrusted_attributes` replaces the flagged values when
+the dimension is built, so completeness is guaranteed *by construction*: a dimension row
+cannot be written with an untrustworthy attribute, because the step that writes it
+replaces them. Substituting in Silver instead would rely on the tier config staying in
+sync with the dimension config, with nothing enforcing it. `'Unknown'` is also a
+presentation decision, and Gold is the presentation layer.
+
+**Two kinds of repairable, not one.** This is where the first implementation was wrong.
+A repairable violation can be *missing* (`region IS NULL`) or *invalid* (`segment =
+'Premium'` — present, and not an allowed value). The original code used `coalesce`, which
+only handles the first, so an invalid categorical value flowed into `dim_customers` and
+read as a legitimate segment in every report. That is arguably worse than the quarantine
+it replaced: the row used to be silently absent, and was instead silently wrong.
+
+Substitution is therefore driven by Silver's `repaired_columns` flags rather than by
+null-ness. Silver already named exactly which columns failed; Gold re-deriving a weaker
+signal was the mistake.
 
 Kimball's rule is the reason for a token rather than a null: a dimension attribute is
 never NULL. Nulls behave badly in group-bys, joins and BI tools, and push a `COALESCE`
@@ -71,7 +82,7 @@ column and keep exactly the old ordering.
 |---|---|
 | Tier classification | `superstore_silver_transformations.add_error_columns` |
 | Dedup ordering | `superstore_silver_transformations.classify_duplicates` |
-| Substitution | `superstore_gold_dimension_framework.substitute_missing_attributes` |
+| Substitution | `superstore_gold_dimension_framework.substitute_untrusted_attributes` |
 | Applied at | `prepare_scd2_columns`, before the hash |
 | Config | `severity:` per entity in the silver config |
 | Wiring | silver orchestrator (**two** places), gold dimensional orchestrator |
@@ -99,6 +110,29 @@ Dimension growth of +142 and +77 matches the orphan counts exactly.
 After the dedup fix, 77 dimension rows still carry an `'Unknown'` — precisely the
 customers step 3 newly recovered, whose only rows had missing attributes. Every
 surviving placeholder now belongs to an entity with no better value available anywhere.
+
+## How the invalid-value defect was found
+
+By the qa integration test, after this work had already been declared "verified in dev".
+
+Nothing else could have caught it:
+
+- **Unit tests passed** — they only covered null cases, so they tested the author's
+  assumption rather than the requirement.
+- **Dev passed** — every invalid customer value in `dev` happens to be a null. Products
+  *do* carry invalid-but-present values, but standardization conforms those *before*
+  validation, so they never reach the repairable path.
+- **Only the seeded fixture** contains a categorical violation that survives to Gold:
+  customer `AA-10480`, segment `'Premium'`, region `'North'`, with a valid business key.
+
+The measurement in dev was real, and incapable of failing. What data a check runs against
+is part of the check.
+
+The integration test also failed once *legitimately* before this: it asserted `AA-10480`
+must be quarantined, which was correct under the old all-fatal policy. Those assertions
+were replaced with the new contract in both directions — not quarantined, kept in Silver,
+flagged, values unmodified there, and substituted at Gold — plus an assertion that no
+current `dim_customers` row has a null attribute.
 
 ## What this does not do
 

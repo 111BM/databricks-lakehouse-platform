@@ -79,6 +79,37 @@ for dim, key in DIMS.items():
 
 # COMMAND ----------
 
+# DBTITLE 1,Severity tiers — the repairable row reached the dimension, substituted
+# AA-10480 carries an invalid segment and region in the seed but a valid key. Under
+# severity tiers it is no longer quarantined, so it must reach dim_customers -- and
+# every attribute must be populated, because a dimension attribute is never NULL
+# (docs/SEVERITY_TIERS.md). Silver keeps the offending values; Gold substitutes.
+#
+# This is the end-to-end half of the routing policy: assert_silver checks the row
+# was kept and flagged, this checks it was rendered usable.
+dc = f"{GOLD}.dim_customers"
+if table_exists(dc):
+    aa = spark.table(dc).filter((col("customer_id") == "AA-10480") & (col("is_current") == True))
+    if check("dim_customers has a current row for the repairable AA-10480",
+             aa.count() == 1, f"rows={aa.count()}"):
+        row = aa.first()
+        check("dim_customers substituted the invalid segment",
+              row["segment"] == "Unknown", f"segment={row['segment']}")
+        check("dim_customers substituted the invalid region",
+              row["region"] == "Unknown", f"region={row['region']}")
+        check("dim_customers kept the attributes that were valid",
+              row["customer_name"] == "Bad Categorical", f"name={row['customer_name']}")
+
+    # No dimension attribute may be null anywhere in the current set.
+    attrs = ["customer_name", "segment", "country", "state", "city", "postal_code", "region"]
+    present = [c for c in attrs if c in spark.table(dc).columns]
+    nulls = spark.table(dc).filter(col("is_current") == True).filter(
+        " OR ".join(f"{c} IS NULL" for c in present)
+    ).count()
+    check("no current dim_customers row has a null attribute", nulls == 0, f"nulls={nulls}")
+
+# COMMAND ----------
+
 # DBTITLE 1,Gold dimension metrics recorded for this run
 m = f"{METRICS}.gold_layer_metrics"
 if table_exists(m):

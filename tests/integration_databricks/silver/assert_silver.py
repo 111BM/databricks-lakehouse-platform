@@ -64,18 +64,41 @@ if check(f"{q_cust} exists", table_exists(q_cust)):
     check("quarantine caught the null Customer ID row",
           qc.filter(col("customer_id").isNull()).count() >= 1)
     # AA-10480 violates BOTH customers categorical rules: invalid segment 'Premium'
-    # and invalid region 'North'. It must be quarantined and error_columns must name
-    # both failing rules. (Its order is also dirtied in the seed so the fact table
-    # doesn't orphan a customer that no longer exists in the dimension.)
-    check("quarantine caught the invalid segment 'Premium'",
-          qc.filter(col("segment") == "Premium").count() >= 1)
-    check("quarantine caught the invalid region 'North'",
-          qc.filter(col("region") == "North").count() >= 1)
-    if "error_columns" in qc.columns:
-        check("quarantine error_columns names the segment rule",
-              qc.filter(array_contains(col("error_columns"), "segment")).count() >= 1)
-        check("quarantine error_columns names the region rule",
-              qc.filter(array_contains(col("error_columns"), "region")).count() >= 1)
+    # and invalid region 'North' -- but its business key is intact.
+    #
+    # Under severity tiers (docs/SEVERITY_TIERS.md) that is no longer a quarantine
+    # case. Only business keys are fatal; a descriptive violation is recorded and
+    # the row continues, because quarantine should mean "this row cannot be
+    # trusted at all", not "this row is imperfect". These assertions previously
+    # required the opposite and are the reason this test failed the first time
+    # tiers ran -- correctly: it is the only check that covers the routing policy
+    # end to end.
+    check("quarantine did NOT take the repairable-only row (valid key)",
+          qc.filter(col("customer_id") == "AA-10480").count() == 0)
+
+# The other half of the tier contract: the repairable row reached Silver, its
+# violations are recorded, and Silver did NOT alter the values (substitution is
+# Gold's job, so Silver stays diffable against Bronze).
+sc_tier = f"{SILVER}.customers"
+if table_exists(sc_tier):
+    sct = spark.table(sc_tier)
+    aa = sct.filter(col("customer_id") == "AA-10480")
+    if check("silver kept the repairable-only row AA-10480", aa.count() == 1,
+             f"rows={aa.count()}"):
+        if "repaired_columns" in sct.columns:
+            check("silver repaired_columns names the segment rule",
+                  aa.filter(array_contains(col("repaired_columns"), "segment")).count() == 1)
+            check("silver repaired_columns names the region rule",
+                  aa.filter(array_contains(col("repaired_columns"), "region")).count() == 1)
+        else:
+            check("silver.customers exposes repaired_columns", False,
+                  "column missing - severity tiers not deployed?")
+        row = aa.first()
+        check("silver did not overwrite the offending values",
+              row["segment"] == "Premium" and row["region"] == "North",
+              f"segment={row['segment']}, region={row['region']}")
+
+# COMMAND ----------
 
 # ship_date < order_date -> orders_dirty
 q_ord = f"{QUARANTINE}.orders_dirty"

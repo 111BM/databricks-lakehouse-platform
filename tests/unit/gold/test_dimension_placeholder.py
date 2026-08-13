@@ -1,7 +1,7 @@
 """
 ==============================================================
 Unit Tests: Gold dimension attribute substitution
-Target: superstore_gold_dimension_framework.substitute_missing_attributes
+Target: superstore_gold_dimension_framework.substitute_untrusted_attributes
 ==============================================================
 
 The second half of the severity-tier design. Silver decides which violations
@@ -13,6 +13,13 @@ be written with a null attribute, because the step that writes it fills them.
 Kimball's rule is the reason -- a dimension attribute is never NULL. Nulls
 behave badly in group-bys, joins and BI tools, and push a COALESCE into every
 consumer.
+
+Null is not the only untrustworthy state, and an early version of this missed
+that: a categorical violation like segment='Premium' is PRESENT and wrong, so a
+coalesce leaves it alone and it reaches the dimension looking legitimate. Dev
+could not surface it -- every invalid customer value there happened to be null --
+and the qa integration test caught it. Substitution is therefore driven by
+Silver's repaired_columns flags, not by null-ness.
 ==============================================================
 """
 
@@ -26,7 +33,7 @@ from pyspark.sql.types import (
 
 from superstore_gold_dimension_framework import (
     DIMENSION_PLACEHOLDER,
-    substitute_missing_attributes,
+    substitute_untrusted_attributes,
 )
 
 ATTRIBUTES = ["customer_name", "segment", "region"]
@@ -45,7 +52,7 @@ class TestSubstituteMissingAttributes:
     def test_null_attribute_becomes_the_placeholder(self, spark):
         df = self._frame(spark, [("CG-12520", "Claire", None, "South")])
 
-        out = substitute_missing_attributes(df, ATTRIBUTES).first()
+        out = substitute_untrusted_attributes(df, ATTRIBUTES).first()
 
         assert out["segment"] == DIMENSION_PLACEHOLDER
 
@@ -55,7 +62,7 @@ class TestSubstituteMissingAttributes:
     def test_present_values_are_untouched(self, spark):
         df = self._frame(spark, [("CG-12520", "Claire", "Consumer", "South")])
 
-        out = substitute_missing_attributes(df, ATTRIBUTES).first()
+        out = substitute_untrusted_attributes(df, ATTRIBUTES).first()
 
         assert (out["customer_name"], out["segment"], out["region"]) == (
             "Claire", "Consumer", "South",
@@ -65,7 +72,7 @@ class TestSubstituteMissingAttributes:
         # The dimension must contain no nulls at all, not merely fewer.
         df = self._frame(spark, [("CG-12520", None, None, None)])
 
-        out = substitute_missing_attributes(df, ATTRIBUTES).first()
+        out = substitute_untrusted_attributes(df, ATTRIBUTES).first()
 
         assert all(out[c] == DIMENSION_PLACEHOLDER for c in ATTRIBUTES)
 
@@ -78,7 +85,7 @@ class TestSubstituteMissingAttributes:
         ])
         df = spark.createDataFrame([(None, None)], schema)
 
-        out = substitute_missing_attributes(df, ["segment"]).first()
+        out = substitute_untrusted_attributes(df, ["segment"]).first()
 
         assert out["customer_id"] is None
         assert out["segment"] == DIMENSION_PLACEHOLDER
@@ -92,7 +99,7 @@ class TestSubstituteMissingAttributes:
         ])
         df = spark.createDataFrame([("CG-12520", None, None)], schema)
 
-        out = substitute_missing_attributes(df, ["segment", "order_count"])
+        out = substitute_untrusted_attributes(df, ["segment", "order_count"])
 
         row = out.first()
         assert row["segment"] == DIMENSION_PLACEHOLDER
@@ -102,7 +109,7 @@ class TestSubstituteMissingAttributes:
     def test_column_not_present_in_the_frame_is_ignored(self, spark):
         df = self._frame(spark, [("CG-12520", "Claire", "Consumer", "South")])
 
-        out = substitute_missing_attributes(df, ATTRIBUTES + ["nonexistent"])
+        out = substitute_untrusted_attributes(df, ATTRIBUTES + ["nonexistent"])
 
         assert out.count() == 1
 
@@ -114,4 +121,70 @@ class TestSubstituteMissingAttributes:
             ("CG-3", "C", "Corporate", "West"),
         ])
 
-        assert substitute_missing_attributes(df, ATTRIBUTES).count() == 3
+        assert substitute_untrusted_attributes(df, ATTRIBUTES).count() == 3
+
+
+@pytest.mark.unit
+class TestInvalidValuesAreAlsoSubstituted:
+    """
+    THE REGRESSION SUITE for the defect the qa integration test found.
+
+    substitute_untrusted_attributes originally used coalesce, which only replaces
+    NULL. A categorical violation such as segment='Premium' is present and wrong,
+    so it flowed into dim_customers unchanged and read as a legitimate segment in
+    every report -- arguably worse than the quarantine it replaced.
+
+    Silver already names the failing column in repaired_columns. Substitution is
+    driven by that, so both flavours of untrustworthy value are covered.
+    """
+
+    def _frame(self, spark, rows):
+        from pyspark.sql.types import ArrayType
+        schema = StructType([
+            StructField("customer_id", StringType(), True),
+            StructField("segment", StringType(), True),
+            StructField("region", StringType(), True),
+            StructField("repaired_columns", ArrayType(StringType()), True),
+        ])
+        return spark.createDataFrame(rows, schema)
+
+    def test_invalid_but_present_value_is_substituted(self, spark):
+        # coalesce would leave 'Premium' untouched; the flag must drive it.
+        df = self._frame(spark, [("AA-10480", "Premium", "North", ["segment", "region"])])
+
+        out = substitute_untrusted_attributes(df, ["segment", "region"]).first()
+
+        assert out["segment"] == DIMENSION_PLACEHOLDER
+        assert out["region"] == DIMENSION_PLACEHOLDER
+
+    def test_valid_values_survive_even_when_the_row_has_other_repairs(self, spark):
+        # Only the flagged columns are replaced -- a repair elsewhere must not
+        # blank an attribute that was fine.
+        df = self._frame(spark, [("CG-1", "Consumer", "North", ["region"])])
+
+        out = substitute_untrusted_attributes(df, ["segment", "region"]).first()
+
+        assert out["segment"] == "Consumer"
+        assert out["region"] == DIMENSION_PLACEHOLDER
+
+    def test_nulls_are_still_substituted(self, spark):
+        # The original behaviour must not regress.
+        df = self._frame(spark, [("CG-2", None, "South", [None])])
+
+        out = substitute_untrusted_attributes(df, ["segment", "region"]).first()
+
+        assert out["segment"] == DIMENSION_PLACEHOLDER
+        assert out["region"] == "South"
+
+    def test_frames_without_the_flag_column_fall_back_to_nulls_only(self, spark):
+        # Entities with no severity map carry no repaired_columns; substitution
+        # must still work rather than raising on a missing column.
+        schema = StructType([
+            StructField("product_id", StringType(), True),
+            StructField("category", StringType(), True),
+        ])
+        df = spark.createDataFrame([("P1", None)], schema)
+
+        out = substitute_untrusted_attributes(df, ["category"]).first()
+
+        assert out["category"] == DIMENSION_PLACEHOLDER
