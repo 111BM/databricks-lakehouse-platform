@@ -129,48 +129,97 @@ def add_error_columns(
     business_columns: list,
     regex_cols: dict = None,
     categorical_allowed_vals: dict = None,
+    severity: dict = None,
 ) -> DataFrame:
     """
-    Add an "error_columns" array listing which validations each row failed.
+    Record which validations each row failed, split by how serious the failure
+    is.
 
-    Rules applied (in order):
-      1. Null check  -> column name added if value is null
-      2. Regex check -> column name added if value does NOT match its pattern
-      3. Categorical -> column name added if value not in allowed set
+    Rules applied (in order), unchanged:
+      1. Null check  -> column name recorded if value is null
+      2. Regex check -> column name recorded if value does NOT match its pattern
+      3. Categorical -> column name recorded if value not in allowed set
 
-    A row with an empty (all-null) error_columns array passed every rule.
-    This is the quarantine-routing core of the Silver layer, extracted from
-    bronze_to_silver_prod so it can be unit tested.
+    Two output arrays instead of one
+    --------------------------------
+      error_columns    -> FATAL violations. Still the quarantine-routing signal:
+                          add_is_valid derives is_valid from this array alone.
+      repaired_columns -> REPAIRABLE violations. Recorded, but the row proceeds
+                          to Silver; Gold substitutes a value when it builds the
+                          dimension.
+
+    Why the split exists
+    --------------------
+    Every column was fatal, so a customer missing only a `postal_code` was
+    quarantined whole, never reached `dim_customers`, and its facts contributed
+    nothing to any mart while every upstream check passed (see
+    docs/REFERENTIAL_COMPLETENESS.md). Quarantine should mean *this row cannot
+    be trusted at all*, not *this row is imperfect*.
+
+    Only business keys are fatal by default policy, but this function does not
+    assume that: any column absent from `severity` is treated as FATAL, so an
+    unclassified column keeps today's stricter behaviour rather than being
+    silently downgraded to repairable.
+
+    The value is NOT modified here. Silver stays diffable against Bronze, and
+    no `_raw` preservation column is needed because nothing was overwritten.
+    Substitution happens in the Gold dimension build, where completeness is
+    guaranteed by construction and where 'Unknown' is a presentation decision
+    rather than a cleansing one.
 
     NOTE: the bespoke ship_date<order_date business rule stays in
     bronze_to_silver_prod (it depends on multi-format date parsing) and is
-    appended to error_columns there before is_valid is computed.
+    appended to error_columns there before is_valid is computed. It is
+    therefore fatal, which is correct -- a shipment before its order is not a
+    cosmetic defect.
+
+    Args:
+        severity: {column: "fatal" | "repairable"}. Unlisted -> "fatal".
     """
     regex_cols = regex_cols or {}
     categorical_allowed_vals = categorical_allowed_vals or {}
+    severity = severity or {}
 
-    error_exprs = [when(col(c).isNull(), lit(c)) for c in business_columns]
-    out = df.withColumn("error_columns", array(*error_exprs))
+    fatal_cols = [c for c in business_columns if severity.get(c, "fatal") == "fatal"]
+    repairable_cols = [c for c in business_columns if severity.get(c, "fatal") != "fatal"]
 
-    for c, regex in regex_cols.items():
-        if c in business_columns:
-            out = out.withColumn(
-                "error_columns",
-                when(
-                    ~col(c).rlike(regex),
-                    array_union(col("error_columns"), array(lit(c))),
-                ).otherwise(col("error_columns")),
-            )
+    def _record(out, target_col, columns):
+        """Apply the three rules over `columns`, collecting names into target_col."""
+        if columns:
+            seed = array(*[when(col(c).isNull(), lit(c)) for c in columns])
+        else:
+            # No columns in this tier -- the common case for repaired_columns
+            # when no severity map is configured. A bare array() is untyped in
+            # Spark, so seed a single null instead: same shape as a row that
+            # passed every rule, and filter(x is not null) still yields empty.
+            seed = array(lit(None).cast("string"))
 
-    for c, allowed_vals in categorical_allowed_vals.items():
-        if c in business_columns:
-            out = out.withColumn(
-                "error_columns",
-                when(
-                    ~col(c).isin(allowed_vals),
-                    array_union(col("error_columns"), array(lit(c))),
-                ).otherwise(col("error_columns")),
-            )
+        out = out.withColumn(target_col, seed)
+
+        for c, regex in regex_cols.items():
+            if c in columns:
+                out = out.withColumn(
+                    target_col,
+                    when(
+                        ~col(c).rlike(regex),
+                        array_union(col(target_col), array(lit(c))),
+                    ).otherwise(col(target_col)),
+                )
+
+        for c, allowed_vals in categorical_allowed_vals.items():
+            if c in columns:
+                out = out.withColumn(
+                    target_col,
+                    when(
+                        ~col(c).isin(allowed_vals),
+                        array_union(col(target_col), array(lit(c))),
+                    ).otherwise(col(target_col)),
+                )
+
+        return out
+
+    out = _record(df, "error_columns", fatal_cols)
+    out = _record(out, "repaired_columns", repairable_cols)
 
     return out
 
@@ -230,9 +279,26 @@ def classify_duplicates(
     tiebreak_cols: list = None,
 ) -> DataFrame:
     """
-    Attach a "row_num" column ranking rows within each `business_keys` group,
-    most recent `order_col` first. row_num == 1 is the winner (latest record
-    wins); row_num > 1 are duplicates destined for the audit table.
+    Attach a "row_num" column ranking rows within each `business_keys` group.
+    row_num == 1 is the winner; row_num > 1 are duplicates destined for the
+    audit table.
+
+    Ordering, most significant first:
+      1. fewest repaired attributes  (only when `repaired_columns` is present)
+      2. most recent `order_col`
+      3. content hash of `tiebreak_cols`
+
+    Completeness ranks above recency
+    --------------------------------
+    Severity tiers let a row with missing attributes reach Silver instead of
+    being quarantined. Ranked on arrival alone, such a row can beat a complete
+    observation of the same entity, and Gold then substitutes 'Unknown' over a
+    value that was present in the batch. Measured in dev: 81 of 99 'Unknown'
+    regions had a real value in the audit table for the same customer.
+
+    Preferring completeness costs nothing, because `order_col` carries no
+    business meaning (see Determinism below) -- recency here was never evidence
+    of truth, so there is nothing to trade away.
 
     This is the single source of truth for the dedup window.
     `deduplicate_latest_wins` splits on it, and `bronze_to_silver_prod` calls
@@ -275,7 +341,26 @@ def classify_duplicates(
         excluded = {*business_keys, order_col, "row_num"}
         tiebreak_cols = [c for c in df.columns if c not in excluded]
 
-    order_by = [col(order_col).desc()]
+    order_by = []
+
+    # Completeness outranks arrival. A row missing repairable attributes is a
+    # poorer observation of the same entity, and letting it win overwrites known
+    # values with 'Unknown' at Gold -- measured at 81 of 99 'Unknown' regions in
+    # dev, i.e. the value existed and was discarded.
+    #
+    # This costs nothing epistemically: bronze_ingestion_ts carries no business
+    # meaning here (the source has no change timestamp -- see the deduplication
+    # and retroactive-history entries in the README backlog), so "latest
+    # arrival" was never evidence of "current truth". Given two observations of
+    # one entity and no way to order them in business time, prefer the one that
+    # actually carries its attributes.
+    if "repaired_columns" in df.columns:
+        order_by.append(
+            size(expr("filter(repaired_columns, x -> x is not null)")).asc()
+        )
+
+    order_by.append(col(order_col).desc())
+
     if tiebreak_cols:
         order_by.append(content_hash(tiebreak_cols).desc())
 

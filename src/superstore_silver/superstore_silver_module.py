@@ -364,6 +364,9 @@ def write_derived_table(
     (df.write
        .format("delta")
        .mode("append")
+       # repaired_columns is additive; existing quarantine/audit tables predate
+       # it. Bronze's entity append already uses mergeSchema for the same reason.
+       .option("mergeSchema", "true")
        .saveAsTable(table))
 
     log_event(
@@ -392,6 +395,7 @@ def bronze_to_silver_prod(
     date_cast_cols: dict = {},
     categorical_allowed_vals: dict = {},
     value_standardization: dict = {},
+    severity: dict = {},
     quarantine_table: str = None,
     shuffle_partitions: int = 200,
     metrics_table: str=None,
@@ -596,7 +600,9 @@ def bronze_to_silver_prod(
             # dq_df = dq_df.withColumn("is_any_dirty", is_any_dirty_col)
 
             # Data quality: build error_columns (null + regex + categorical) — extracted, unit-tested
-            dq_df = add_error_columns(clean_df, business_columns, regex_cols, categorical_allowed_vals)
+            dq_df = add_error_columns(
+                clean_df, business_columns, regex_cols, categorical_allowed_vals, severity
+            )
 
             # Business rule: ship_date should not be before order_date
             if "order_date" in business_columns and "ship_date" in business_columns:
@@ -694,7 +700,7 @@ def bronze_to_silver_prod(
             if dirty_count > 0:  # Proceed only if there are dirty rows (already counted above)
                 # Generate a SHA-256 hash for each dirty row based on its full content
                 # The hash ensures uniqueness for quarantine table purposes
-                dirty_selected_cols = [*business_columns, *meta_columns, "error_columns", "is_valid"]
+                dirty_selected_cols = [*business_columns, *meta_columns, "error_columns", "repaired_columns", "is_valid"]
                 dirty_rows_df = (
                     dirty_rows_df.select(*dirty_selected_cols)
                     # Generate SHA-256 hash for full row (shared row_hash() helper)
@@ -839,7 +845,7 @@ def bronze_to_silver_prod(
                 # Proceed only if Silver has rows to insert
                 # Generate a SHA-256 hash for each dedups row based on its full content
                 # The hash ensures uniqueness for deduplication and auditing purposes dup_columns = [c for c in silver_dup_df.columns if c not in ["row_num"]]
-                dedups_selected_cols = [*business_columns, *meta_columns, "error_columns", "is_valid"]
+                dedups_selected_cols = [*business_columns, *meta_columns, "error_columns", "repaired_columns", "is_valid"]
                 silver_dedup_df = (
                     silver_dedup_df.select(*dedups_selected_cols)
                     .withColumn(silver_col, row_hash(business_columns))  # Generate SHA-256 hash (shared helper)
@@ -898,6 +904,10 @@ def bronze_to_silver_prod(
                     silver_delta = DeltaTable.forName(spark, silver_table)
                     
                     # Merge Operation
+                    # withSchemaEvolution(), NOT the autoMerge Spark conf: that
+                    # conf raises CONFIG_NOT_AVAILABLE on Serverless, which is
+                    # where this runs. A MERGE cannot otherwise introduce a
+                    # column, and repaired_columns is new to existing tables.
                     (
                         silver_delta.alias("tgt").merge(
                             silver_dedup_df.alias("src"),
@@ -905,7 +915,9 @@ def bronze_to_silver_prod(
                         ).whenMatchedUpdate(
                             # condition=f"tgt.{silver_col} != src.{silver_col}",
                             set={c: f"src.{c}" for c in update_columns}
-                            ).whenNotMatchedInsertAll().execute()
+                            ).whenNotMatchedInsertAll()
+                             .withSchemaEvolution()
+                             .execute()
                     )
 
                     # --- METRICS: read immediately after merge ---
@@ -967,7 +979,7 @@ def bronze_to_silver_prod(
             else:
                 # Only proceed if there are duplicates
                 # Generate hash using the actual columns in silver_dup_df, not original Bronze df
-                dups_selected_cols = [*business_columns, *meta_columns, "error_columns", "is_valid"]
+                dups_selected_cols = [*business_columns, *meta_columns, "error_columns", "repaired_columns", "is_valid"]
                 silver_dup_df = (
                     silver_dup_df.select(*dups_selected_cols)
                     .withColumn(duplicate_col, row_hash(business_columns))

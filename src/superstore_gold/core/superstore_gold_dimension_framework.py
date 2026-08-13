@@ -250,8 +250,63 @@ def apply_window_filter(df, start_date, end_date, window_ts_col: str = WINDOW_TS
     )
 
 
+DIMENSION_PLACEHOLDER = "Unknown"
+
+
+def substitute_missing_attributes(
+    df,
+    attribute_columns,
+    placeholder: str = DIMENSION_PLACEHOLDER,
+):
+    """
+    Fill null dimension attributes with a descriptive placeholder.
+
+    Kimball's rule: a dimension attribute is never NULL. Nulls behave badly in
+    group-bys (the bucket renders inconsistently or vanishes), in joins, and in
+    every BI tool, and they push a COALESCE into each consumer. A descriptive
+    token keeps the row usable and the aggregate honest.
+
+    This is the second half of the severity-tier design. Silver decides which
+    violations are fatal and records the rest in `repaired_columns` WITHOUT
+    touching the value, so Silver stays diffable against Bronze. Gold fills the
+    gap here, at the point the dimension is built -- so completeness is
+    guaranteed by construction rather than by the tier config happening to stay
+    in sync with the dimension config. 'Unknown' is also a presentation
+    decision, and Gold is the presentation layer.
+
+    Runs BEFORE the row hash is computed, so a repaired row and a later clean
+    row hash differently and SCD2 records the enrichment as a genuine change.
+
+    Only string columns are substituted; a numeric or date attribute is left
+    alone rather than being coerced into a string placeholder.
+
+    Business keys should not be passed in `attribute_columns`. They cannot be
+    null in practice -- they are the fatal tier, so a null key is quarantined at
+    Silver and never arrives -- but excluding them explicitly means this can
+    never manufacture a dimension member out of a missing key.
+
+    Args:
+        df: Silver frame about to become dimension rows.
+        attribute_columns: descriptive columns (entity columns minus keys).
+        placeholder: token to substitute.
+
+    Returns:
+        Frame with nulls in those columns replaced.
+    """
+    string_cols = {
+        f.name for f in df.schema.fields if isinstance(f.dataType, StringType)
+    }
+
+    out = df
+    for c in attribute_columns:
+        if c in string_cols:
+            out = out.withColumn(c, coalesce(col(c), lit(placeholder)))
+
+    return out
+
+
 def get_incremental_silver_for_dims(
-    spark, 
+    spark,
     silver_table: str, 
     gold_table: str, 
     backfill_config: dict,
@@ -443,7 +498,8 @@ def prepare_scd2_columns(
     hash_column: str,
     master_run_id: str,
     layer_run_id: str,
-    layer: str
+    layer: str,
+    natural_keys: list = None,
 ):
     """
     Prepares columns for Slowly Changing Dimension Type 2:
@@ -485,6 +541,19 @@ def prepare_scd2_columns(
         # One rule for every dimension. It must advance between versions of the
         # same entity or the merge closes a row before its own start; see the
         # docstring for why this is processing time rather than business time.
+        # -------------------------------
+        # Repairable attributes -> 'Unknown', before anything is hashed
+        # -------------------------------
+        # Silver flags a repairable violation without altering the value; the
+        # dimension is where the gap gets filled, so a dimension row can never
+        # be written with a null attribute. Must precede the hash below, or a
+        # repaired row and a later clean row would not differ and SCD2 would
+        # miss the enrichment.
+        attribute_columns = [
+            c for c in entity_columns if c not in set(natural_keys or [])
+        ]
+        silver_df = substitute_missing_attributes(silver_df, attribute_columns)
+
         df = silver_df.withColumn("effective_from", col("silver_ingestion_ts"))
 
         # Add gold load timestamp

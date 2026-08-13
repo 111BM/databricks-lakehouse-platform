@@ -94,6 +94,38 @@ class TestSilverConfigParsing:
             f"maps to values outside the allowed set: {set(mapping.values()) - allowed}"
         )
 
+    def test_only_business_keys_are_fatal_for_dimension_entities(self, table_configs):
+        """
+        The tier policy in one assertion: a row is quarantined only when it has
+        no usable identity. Promoting a descriptive column back to fatal would
+        silently reinstate the orphaned-facts behaviour, and nothing else in the
+        pipeline would complain.
+        """
+        for entity in ("customers", "products"):
+            cfg = table_configs[entity]
+            severity = cfg["severity"]
+            fatal = {c for c, s in severity.items() if s == "fatal"}
+
+            assert fatal == set(cfg["business_keys"]), (
+                f"{entity}: fatal set {fatal} != business keys {set(cfg['business_keys'])}"
+            )
+
+    def test_every_business_column_is_classified(self, table_configs):
+        # An unclassified column defaults to fatal, which is the safe direction
+        # but silent. For the two dimension entities the map should be explicit.
+        for entity in ("customers", "products"):
+            cfg = table_configs[entity]
+            assert set(cfg["severity"]) == set(cfg["business_columns"]), (
+                f"{entity}: severity map does not cover every business column"
+            )
+
+    def test_severity_values_are_a_known_tier(self, table_configs):
+        for entity, cfg in table_configs.items():
+            for column, tier in (cfg.get("severity") or {}).items():
+                assert tier in ("fatal", "repairable"), (
+                    f"{entity}.{column} has unknown tier {tier!r}"
+                )
+
     def test_all_regex_patterns_compile(self, table_configs):
         for table, tcfg in table_configs.items():
             for column, pattern in (tcfg.get("regex_cols") or {}).items():
@@ -409,3 +441,120 @@ class TestValueStandardization:
         out = standardize_values(df, self.MAPPING)
 
         assert [r["category"] for r in out.collect()] == ["off", "OFFICE"]
+
+
+@pytest.mark.unit
+class TestSeverityTiers:
+    """
+    Every column used to be fatal, so a customer missing only a postal_code was
+    quarantined whole, never reached dim_customers, and its orders contributed
+    nothing to any mart while every upstream check passed green.
+
+    add_error_columns now splits its output: error_columns holds FATAL
+    violations and still drives quarantine routing, repaired_columns records
+    violations the row survives. The value is deliberately NOT modified here --
+    Gold substitutes when it builds the dimension.
+    """
+
+    COLS = ["customer_id", "segment", "postal_code"]
+    SEVERITY = {
+        "customer_id": "fatal",
+        "segment": "repairable",
+        "postal_code": "repairable",
+    }
+    ALLOWED = {"segment": ["Consumer", "Corporate", "Home Office"]}
+
+    def _schema(self):
+        from pyspark.sql.types import StringType, StructField, StructType
+        return StructType([StructField(c, StringType(), True) for c in self.COLS])
+
+    def _validate(self, spark, row):
+        df = spark.createDataFrame([row], self._schema())
+        return add_is_valid(
+            add_error_columns(df, self.COLS, {}, self.ALLOWED, self.SEVERITY)
+        ).first()
+
+    def _clean(self, arr):
+        return [x for x in arr if x is not None]
+
+    def test_repairable_violation_no_longer_quarantines_the_row(self, spark):
+        # THE POINT. Valid key, missing postal_code -> reaches Silver.
+        out = self._validate(spark, ("CG-12520", "Consumer", None))
+
+        assert out["is_valid"] is True
+        assert self._clean(out["error_columns"]) == []
+        assert self._clean(out["repaired_columns"]) == ["postal_code"]
+
+    def test_fatal_violation_still_quarantines(self, spark):
+        out = self._validate(spark, (None, "Consumer", "42420"))
+
+        assert out["is_valid"] is False
+        assert self._clean(out["error_columns"]) == ["customer_id"]
+
+    def test_value_is_not_modified_at_silver(self, spark):
+        # Silver records the repair; it does not perform it. Keeping Silver
+        # diffable against Bronze is why no _raw column is needed.
+        out = self._validate(spark, ("CG-12520", "Nordwest", "42420"))
+
+        assert out["segment"] == "Nordwest"
+        assert self._clean(out["repaired_columns"]) == ["segment"]
+
+    def test_fatal_wins_when_a_row_has_both(self, spark):
+        out = self._validate(spark, (None, "Nordwest", None))
+
+        assert out["is_valid"] is False
+        assert self._clean(out["error_columns"]) == ["customer_id"]
+        assert sorted(self._clean(out["repaired_columns"])) == ["postal_code", "segment"]
+
+    def test_clean_row_has_neither(self, spark):
+        out = self._validate(spark, ("CG-12520", "Consumer", "42420"))
+
+        assert out["is_valid"] is True
+        assert self._clean(out["error_columns"]) == []
+        assert self._clean(out["repaired_columns"]) == []
+
+    def test_unlisted_columns_default_to_fatal(self, spark):
+        # A column nobody classified must keep the STRICTER behaviour. Silently
+        # downgrading it to repairable would be the failure mode this whole
+        # backlog is about.
+        df = spark.createDataFrame([(None, "Consumer", "42420")], self._schema())
+
+        out = add_is_valid(
+            add_error_columns(df, self.COLS, {}, self.ALLOWED, severity={})
+        ).first()
+
+        assert out["is_valid"] is False
+        assert self._clean(out["error_columns"]) == ["customer_id"]
+
+    def test_no_severity_map_is_backward_compatible(self, spark):
+        # Without a severity map the routing must be byte-for-byte what it was.
+        df = spark.createDataFrame([("CG-12520", "Consumer", None)], self._schema())
+
+        out = add_is_valid(add_error_columns(df, self.COLS, {}, self.ALLOWED)).first()
+
+        assert out["is_valid"] is False  # postal_code null was fatal before
+        assert self._clean(out["error_columns"]) == ["postal_code"]
+        assert self._clean(out["repaired_columns"]) == []
+
+    def test_reconciliation_still_partitions_every_row(self, spark):
+        # bronze == silver + quarantine + audit depends on is_valid being a
+        # total split. Tiers move rows between buckets; they must not lose any.
+        rows = [
+            ("CG-1", "Consumer", "42420"),   # clean
+            ("CG-2", "Consumer", None),      # repairable
+            (None, "Consumer", "42420"),     # fatal
+            (None, "Nordwest", None),        # both
+        ]
+        df = spark.createDataFrame(rows, self._schema())
+
+        out = add_is_valid(
+            add_error_columns(df, self.COLS, {}, self.ALLOWED, self.SEVERITY)
+        )
+
+        valid = out.filter("is_valid = true").count()
+        invalid = out.filter("is_valid = false").count()
+
+        assert valid == 2
+        assert invalid == 2
+        assert valid + invalid == len(rows)
+        assert out.filter("is_valid IS NULL").count() == 0

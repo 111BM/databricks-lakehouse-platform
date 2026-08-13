@@ -388,3 +388,98 @@ class TestDedupDeterminism:
 
         assert winners.count() == 1
         assert losers.count() == 1
+
+
+@pytest.mark.unit
+class TestCompletenessOutranksRecency:
+    """
+    Severity tiers let a row with missing attributes reach Silver rather than
+    being quarantined. Ranked on arrival alone, such a row can beat a COMPLETE
+    observation of the same entity -- and Gold then substitutes 'Unknown' over a
+    value that was sitting in the same batch.
+
+    Measured in dev before this fix: 81 of 99 dimension rows showing
+    region='Unknown' had a real region in the audit table for the same
+    customer. The value existed and was discarded.
+
+    Preferring completeness is free: bronze_ingestion_ts carries no business
+    meaning (no change timestamp in the source), so recency was never evidence
+    of truth.
+    """
+
+    COLS = ["customer_id", "region", "bronze_ingestion_ts", "repaired_columns"]
+
+    def _frame(self, spark, rows):
+        from pyspark.sql.types import (
+            ArrayType, StringType, StructField, StructType, TimestampType,
+        )
+        schema = StructType([
+            StructField("customer_id", StringType(), True),
+            StructField("region", StringType(), True),
+            StructField("bronze_ingestion_ts", TimestampType(), True),
+            StructField("repaired_columns", ArrayType(StringType()), True),
+        ])
+        return spark.createDataFrame(rows, schema)
+
+    def test_complete_row_beats_a_newer_repaired_row(self, spark):
+        # THE REGRESSION TEST. The repaired row is NEWER and would win on
+        # arrival alone; the complete row must survive instead.
+        df = self._frame(spark, [
+            ("CG-12520", "West", _ts(1), [None]),
+            ("CG-12520", None, _ts(5), ["region"]),
+        ])
+
+        winners, losers = deduplicate_latest_wins(df, ["customer_id"])
+
+        assert winners.count() == 1
+        assert winners.first()["region"] == "West", (
+            "a repaired row must not overwrite a known value"
+        )
+        assert losers.first()["region"] is None
+
+    def test_recency_still_decides_between_equally_complete_rows(self, spark):
+        # Completeness is a tiebreak ABOVE recency, not a replacement for it.
+        df = self._frame(spark, [
+            ("CG-12520", "West", _ts(1), [None]),
+            ("CG-12520", "East", _ts(5), [None]),
+        ])
+
+        winners, _ = deduplicate_latest_wins(df, ["customer_id"])
+
+        assert winners.first()["region"] == "East"
+
+    def test_fewer_repairs_wins_when_both_are_repaired(self, spark):
+        df = self._frame(spark, [
+            ("CG-12520", "West", _ts(9), ["segment", "city"]),
+            ("CG-12520", "West", _ts(1), ["segment"]),
+        ])
+
+        winners, _ = deduplicate_latest_wins(df, ["customer_id"])
+
+        assert winners.first()["bronze_ingestion_ts"] == _ts(1)
+
+    def test_frames_without_repaired_columns_are_unaffected(self, spark):
+        # Entities with no severity map (orders, sales) have no such column;
+        # their ordering must stay exactly latest-wins.
+        df = spark.createDataFrame(
+            [("O1", "a", _ts(1)), ("O1", "b", _ts(5))],
+            ["order_id", "val", "bronze_ingestion_ts"],
+        )
+
+        winners, _ = deduplicate_latest_wins(df, ["order_id"])
+
+        assert winners.first()["val"] == "b"
+
+    def test_split_is_still_exhaustive(self, spark):
+        # The reconciliation invariant must survive the new sort key.
+        df = self._frame(spark, [
+            ("A", "West", _ts(1), [None]),
+            ("A", None, _ts(5), ["region"]),
+            ("B", None, _ts(1), ["region"]),
+        ])
+
+        classified = classify_duplicates(df, ["customer_id"])
+
+        assert classified.filter("row_num = 1").count() == 2
+        assert classified.filter("row_num > 1").count() == 1
+        assert classified.filter("row_num IS NULL").count() == 0

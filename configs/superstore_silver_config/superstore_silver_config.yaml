@@ -33,6 +33,22 @@ silver_table_configs:
       - city
       - postal_code
       - region
+    # Only the business key is fatal. Every other column is descriptive: a
+    # customer missing a postal_code used to be quarantined whole, never reached
+    # dim_customers, and its orders then contributed nothing to any mart
+    # (docs/REFERENTIAL_COMPLETENESS.md). Repairable violations are recorded in
+    # repaired_columns and the row continues; Gold substitutes 'Unknown'.
+    # Anything omitted here defaults to fatal -- an unclassified column keeps
+    # the stricter behaviour rather than being silently downgraded.
+    severity:
+      customer_id: fatal
+      customer_name: repairable
+      segment: repairable
+      country: repairable
+      state: repairable
+      city: repairable
+      postal_code: repairable
+      region: repairable
     meta_columns:
       - bronze_ingestion_ts
     ingestion_col: bronze_ingestion_ts
@@ -74,6 +90,11 @@ silver_table_configs:
       - product_name
       - category
       - sub_category
+    severity:
+      product_id: fatal
+      product_name: repairable
+      category: repairable
+      sub_category: repairable
     meta_columns:
       - bronze_ingestion_ts
     ingestion_col: bronze_ingestion_ts
