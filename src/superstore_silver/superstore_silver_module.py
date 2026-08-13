@@ -1026,6 +1026,15 @@ def bronze_to_silver_prod(
             )
             
     except Exception as e:
+            # Deliberately does NOT re-raise: the metrics row below is the record
+            # of what happened and is worth writing even for a failed entity, and
+            # the orchestrator loop still has other tables to attempt.
+            #
+            # The task must still fail. process_multiple_tables collects every
+            # run_status == "failure" and raises after the loop, so one run
+            # reports all broken tables. Removing that check would restore the
+            # original defect, where four entities failed outright and the job
+            # reported SUCCESS because nothing propagated.
             run_status = "failure"
             notes = str(e)
             log_event(logger_silver, "ERROR", f"ETL failed for table", table=bronze_table, master_run_id=master_run_id,
