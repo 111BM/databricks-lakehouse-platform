@@ -75,7 +75,8 @@ column and keep exactly the old ordering.
 | Applied at | `prepare_scd2_columns`, before the hash |
 | Config | `severity:` per entity in the silver config |
 | Wiring | silver orchestrator (**two** places), gold dimensional orchestrator |
-| Tests | `test_silver_dq.py`, `test_silver_dedup.py`, `test_dimension_placeholder.py` |
+| Placeholder monitor | `superstore_placeholder_monitor`, called from both dimension-driven marts |
+| Tests | `test_silver_dq.py`, `test_silver_dedup.py`, `test_dimension_placeholder.py`, `test_placeholder_monitor.py` |
 
 ## Verification
 
@@ -108,11 +109,25 @@ that arrives incomplete, which is when it earns its place. Quoting the row count
 business impact would repeat the mistake called out in
 **[VALUE_STANDARDIZATION.md](VALUE_STANDARDIZATION.md)**.
 
-**`'Unknown'` is not yet monitored.** Substitution converts revenue that was *absent*
-from reports into revenue *attributed to a placeholder*. That is an improvement only
-because it is visible — and it is visible only if someone looks. A per-run metric
-(placeholder rows and revenue share per dimension) is the missing half of this design;
-without it, silent absence has been traded for silent misattribution.
+**`'Unknown'` is monitored, and had to be.** Substitution converts revenue that was
+*absent* from reports into revenue *attributed to a placeholder* — an improvement only
+because it is visible, and visible only if something looks. Nothing did: the orphaned-fact
+counters in the marts now read 0 *permanently*, because tiers made the condition they
+detect impossible. They would keep reading 0 whether the next feed were pristine or badly
+incomplete.
+
+`superstore_placeholder_monitor` is their successor, logged from both dimension-driven
+marts beside the counters it replaces. Current exposure in dev:
+
+| dimension | placeholder rows | of | share |
+|---|---|---|---|
+| `dim_customers` | 77 | 87,522 | 0.088% |
+| `dim_products` | 142 | 51,653 | 0.275% |
+
+Those counts equal exactly the entities severity tiers recovered, so every placeholder is
+a genuine gap rather than a displaced value. As with the orphan count, the number to watch
+is not the absolute figure but whether it **grows per run** — that is what says a source
+started arriving incomplete.
 
 **`repaired_columns` may be more than this project needs.** Per-row DQ annotation is the
 minority approach — DLT and dbt both record violations as aggregate metrics. The column
@@ -124,5 +139,7 @@ It is kept because it is consistent with the existing `error_columns` design.
 fails on Databricks Serverless with `CONFIG_NOT_AVAILABLE`. The supported route is
 `.withSchemaEvolution()` on the merge builder, and `.option("mergeSchema", "true")` on a
 write. The first attempt failed all four Silver entities and the job still reported
-SUCCESS — because `bronze_to_silver_prod` catches every exception without re-raising.
-That defect is unfixed and is the reason a green run is not evidence on this platform.
+SUCCESS — because `bronze_to_silver_prod` caught every exception without re-raising. That
+is why this work is verified against data counts rather than job status throughout. The
+swallow itself is now fixed: the orchestrator collects every failed entity and raises
+after the loop, verified by fault injection.
