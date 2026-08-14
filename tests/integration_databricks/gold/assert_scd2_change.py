@@ -84,5 +84,80 @@ if table_exists(DIM):
 
 # COMMAND ----------
 
+# DBTITLE 1,Reconciliation under INCREMENTAL loading — the four-term invariant
+# This task runs while the state is still incremental (two separate loads), and
+# that is the only point in the suite where the shortfall exists. After the
+# replay leg it is repaired, so a check placed later would verify the formula
+# only where it returns zero — which proves it is not wrong, not that it is
+# right. The same trap that let an invalid-value defect ship earlier.
+#
+# `bronze == silver + quarantine + audit` is SHORT here by construction. Seed 2
+# re-sends CG-12520 (changed) and DV-13045 (unchanged); Silver's MERGE updates
+# both rows in place, so each superseded version lands in no bucket — not Silver
+# (overwritten), not quarantine (valid), not audit (which only receives
+# intra-batch deduplication losers). Expected shortfall: exactly 2 on customers.
+#
+# The fourth term derives those rows from Bronze rather than storing them, since
+# Bronze already retains every arrival. See docs/RECONCILIATION_INVARIANT.md.
+# The reconciliation helper is production code, not a test helper, so it lives
+# under src/ and needs its own path. The job passes it as shared_utils_path.
+dbutils.widgets.text("shared_utils_path", "")
+_shared = dbutils.widgets.get("shared_utils_path")
+if _shared:
+    sys.path.append(_shared)
+
+try:
+    from superstore_reconciliation import reconciliation_sql
+    _recon_available = True
+except ImportError as exc:
+    _recon_available = False
+    check("superstore_reconciliation is importable", False,
+          f"{exc} — shared_utils_path={_shared!r}")
+
+if _recon_available:
+    for entity, keys in BUSINESS_KEYS.items():
+        # Quarantine and audit tables only exist once they receive a row; the
+        # seed dirties no products, so products_dirty is legitimately absent.
+        r = spark.sql(
+            reconciliation_sql(
+                CATALOG, f"{ENV}_bronze", f"{ENV}_silver",
+                f"{ENV}_quarantine", f"{ENV}_audit", entity, keys,
+                quarantine_exists=table_exists(f"{QUARANTINE}.{entity}_dirty"),
+                audit_exists=table_exists(f"{AUDIT}.{entity}_duplicates"),
+            )
+        ).first()
+
+        three_term = r["silver_rows"] + r["quarantine_rows"] + r["audit_rows"]
+
+        # The four-term invariant must hold even here, where three terms do not.
+        check(f"{entity}: four-term reconciliation balances under incremental",
+              bool(r["balanced"]),
+              f"bronze={r['bronze_rows']}, silver={r['silver_rows']}, "
+              f"quarantine={r['quarantine_rows']}, audit={r['audit_rows']}, "
+              f"superseded={r['superseded_rows']}, accounted={r['accounted_rows']}")
+
+        # superseded must equal the actual gap, not merely make the sum work.
+        # Pinning it against an independently computed residual is what stops
+        # the term becoming a fudge factor that balances by definition.
+        check(f"{entity}: superseded equals the observed three-term shortfall",
+              r["superseded_rows"] == r["bronze_rows"] - three_term,
+              f"superseded={r['superseded_rows']}, "
+              f"observed shortfall={r['bronze_rows'] - three_term}")
+
+    # And the headline: customers is short by exactly the two re-sent rows.
+    rc = spark.sql(
+        reconciliation_sql(CATALOG, f"{ENV}_bronze", f"{ENV}_silver",
+                           f"{ENV}_quarantine", f"{ENV}_audit",
+                           "customers", BUSINESS_KEYS["customers"],
+                           quarantine_exists=table_exists(f"{QUARANTINE}.customers_dirty"),
+                           audit_exists=table_exists(f"{AUDIT}.customers_duplicates"))
+    ).first()
+    check("customers: exactly 2 superseded rows after the second seed",
+          rc["superseded_rows"] == 2,
+          f"superseded={rc['superseded_rows']} — seed 2 re-sends CG-12520 "
+          f"(changed) and DV-13045 (unchanged), so the shortfall must be 2")
+
+# COMMAND ----------
+
 finalize("SCD2_CHANGE")
 dbutils.notebook.exit("SCD2_CHANGE_ASSERTIONS_PASSED")

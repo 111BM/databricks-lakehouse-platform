@@ -21,10 +21,10 @@ RAW_PATH = "/Volumes/workspace/default/my_filestore_integration_test/raw/"
 # NOTE: no dbutils.fs.rm here — we keep the existing checkpoint so this is an
 # incremental append, not a fresh reload.
 
-# Row IDs continue from the first seed (8, 9). Same header/columns.
+# Row IDs continue from the first seed (10, 11). Same header/columns.
 SEED_V2_CSV = """Row ID,Order ID,Order Date,Ship Date,Ship Mode,Customer ID,Customer Name,Segment,Country,City,State,Postal Code,Region,Product ID,Category,Sub-Category,Product Name,Sales,Quantity,Discount,Profit
-8,CA-2026-0007,2026-02-01,2026-02-04,Standard Class,CG-12520,Claire Gute,Consumer,United States,Oakland,California,94601,West,FUR-BO-10001798,Furniture,Bookcases,Bush Bookcase,261.96,2,0.0,41.91
-9,CA-2026-0008,2026-02-01,2026-02-04,Standard Class,DV-13045,Darrin Van,Corporate,United States,Los Angeles,California,90036,West,OFF-PA-10000174,Office Supplies,Paper,Easy-staple paper,51.94,3,0.0,24.43
+10,CA-2026-0007,2026-02-01,2026-02-04,Standard Class,CG-12520,Claire Gute,Consumer,United States,Oakland,California,94601,West,FUR-BO-10001798,Furniture,Bookcases,Bush Bookcase,261.96,2,0.0,41.91
+11,CA-2026-0008,2026-02-01,2026-02-04,Standard Class,DV-13045,Darrin Van,Corporate,United States,Los Angeles,California,90036,West,OFF-PA-10000174,Office Supplies,Paper,Easy-staple paper,51.94,3,0.0,24.43
 """
 
 # COMMAND ----------

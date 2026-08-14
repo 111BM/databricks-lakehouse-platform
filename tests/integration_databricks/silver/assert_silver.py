@@ -100,6 +100,30 @@ if table_exists(sc_tier):
 
 # COMMAND ----------
 
+# blank Product ID -> products AND sales quarantine (both key on product_id)
+q_prod = f"{QUARANTINE}.products_dirty"
+if check(f"{q_prod} exists", table_exists(q_prod),
+         "no product has ever been quarantined - seed row 8 should create this"):
+    check("quarantine caught the null Product ID row",
+          spark.table(q_prod).filter(col("product_id").isNull()).count() >= 1)
+
+q_sales = f"{QUARANTINE}.sales_dirty"
+if check(f"{q_sales} exists", table_exists(q_sales)):
+    qs = spark.table(q_sales)
+    check("quarantine caught the sales row with a null Product ID",
+          qs.filter(col("product_id").isNull()).count() >= 1)
+    # Deliberately a DIFFERENT kind of quarantine: a valid business key with a
+    # bad measure. customers and products are only ever quarantined for null
+    # keys, so a quarantined row that HAS a key is unreachable there -- and that
+    # is exactly the case that made the first reconciliation formula over-count.
+    check("quarantine caught the non-numeric Sales value on a valid key",
+          qs.filter(col("order_id") == "CA-2026-0010").count() >= 1)
+    if "error_columns" in qs.columns:
+        check("quarantine error_columns names the sales rule",
+              qs.filter(array_contains(col("error_columns"), "sales")).count() >= 1)
+
+# COMMAND ----------
+
 # ship_date < order_date -> orders_dirty
 q_ord = f"{QUARANTINE}.orders_dirty"
 if check(f"{q_ord} exists", table_exists(q_ord)):

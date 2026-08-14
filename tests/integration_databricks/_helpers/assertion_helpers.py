@@ -33,7 +33,7 @@ AUDIT = f"{CATALOG}.{ENV}_audit"
 METRICS = f"{CATALOG}.{ENV}_metrics"
 
 # Number of data rows written by 01_seed (used for lossless-ingestion checks)
-SEED_ROW_COUNT = 7
+SEED_ROW_COUNT = 9
 
 # Entity -> business key(s)
 BUSINESS_KEYS = {

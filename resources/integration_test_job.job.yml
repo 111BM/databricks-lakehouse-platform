@@ -112,6 +112,10 @@ resources:
             source: WORKSPACE
             base_parameters:
               helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
+              # Production module, not a test helper: the four-term reconciliation
+              # check runs HERE because this is the only point in the suite where
+              # the state is still incremental and the shortfall exists.
+              shared_utils_path: ${workspace.file_path}/src/superstore_shared_utilities
           environment_key: integration_test_environment
 
         # 6. Replay leg. The suite ran `incremental` only, so every windowed-mode
@@ -193,6 +197,14 @@ resources:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/04_cleanup_integration
             source: WORKSPACE
           environment_key: integration_test_environment
+
+      # The integration_test_* schemas and raw volume are GLOBAL, not per-run, so
+      # two simultaneous runs corrupt each other: one seeds while the other's
+      # cleanup drops the schemas underneath it. Observed when a manual run
+      # overlapped one already in flight — bronze read 16 rows for a 9-row seed,
+      # and every downstream assertion failed for that reason alone.
+      # queue + max_concurrent_runs: 1 makes the second run wait instead.
+      max_concurrent_runs: 1
 
       queue:
         enabled: true
