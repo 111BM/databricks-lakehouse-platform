@@ -1,0 +1,82 @@
+# ==============================================================================
+# Freshness alert — did the weekly prod run actually happen?
+# ==============================================================================
+# The pipeline emails on FAILURE. It says nothing when a run does not happen at
+# all: a paused schedule, a deleted job, a workspace outage, or a trigger that
+# silently stopped firing all look identical to a quiet week.
+#
+# This cannot live inside the pipeline. A check that runs as a pipeline task can
+# only report on runs that occurred, so it is structurally incapable of noticing
+# the pipeline not running. It needs its own schedule, which is exactly what a
+# SQL Alert is.
+#
+# Chosen over the hand-rolled alternative deliberately: an earlier version of
+# this work routed monitors to Slack from inside the pipeline via a custom
+# module. That approach could never have covered this case, and the platform
+# resource does it with configuration instead of code — with its own cadence,
+# managed destinations, alert history and retrigger control. See
+# docs/FRESHNESS_ALERT.md.
+# ==============================================================================
+
+resources:
+  alerts:
+    superstore_freshness:
+      display_name: "[${bundle.target}] Superstore pipeline freshness"
+      warehouse_id: 0c5a02c28448ef5b
+      parent_path: /Workspace/Users/bireshmoktan@gmail.com
+
+      # Hours since the most recent SUCCESSFUL Silver run, across every entity.
+      #
+      # Deliberately measured from silver_layer_metrics rather than the Jobs API:
+      # a job can report SUCCESS while entities inside it fail, which happened on
+      # this platform before the exception handling was fixed. Filtering to
+      # run_status = 'SUCCESS' means a run that completed while failing every
+      # table does NOT refresh the clock.
+      #
+      # SKIPPED is excluded too. An incremental run with no new data is a healthy
+      # run of the pipeline, but it is not evidence that processing works, and
+      # this alert is about whether the pipeline is alive.
+      #
+      # Schema is parameterised: hardcoding prod_metrics would have made the
+      # dev and qa copies of this alert monitor PRODUCTION, so a healthy prod
+      # would silence all three while dev sat broken.
+      query_text: |
+        SELECT
+          ROUND(
+            (unix_timestamp(current_timestamp()) - unix_timestamp(MAX(end_ts))) / 3600.0,
+            1
+          ) AS hours_since_last_success
+        FROM ${var.catalog}.${var.schema}_metrics.silver_layer_metrics
+        WHERE run_status = 'SUCCESS'
+
+      evaluation:
+        source:
+          name: hours_since_last_success
+          aggregation: MAX
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 216
+
+        # A missing or empty result is NOT healthy. If the metrics table is
+        # absent, empty, or unreadable the alert must fire rather than report OK
+        # -- silence caused by a broken monitor is the failure mode this whole
+        # backlog keeps rediscovering.
+        empty_result_state: TRIGGERED
+
+        notification:
+          # Tell me when it recovers too, so a resolved incident closes itself
+          # instead of leaving an open question.
+          notify_on_ok: true
+          # Once a day while it stays broken. Any noisier and it becomes a
+          # channel people mute, after which the next real alert is invisible.
+          retrigger_seconds: 86400
+          subscriptions:
+            - user_email: bireshmoktan@gmail.com
+
+      # Checked daily at 08:00, ~13 hours after the Saturday 19:00 run. Daily
+      # rather than weekly so a missed run is caught within a day rather than
+      # sitting undetected until the next scheduled Saturday.
+      schedule:
+        quartz_cron_schedule: "0 0 8 * * ?"
+        timezone_id: Australia/Sydney
