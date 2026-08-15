@@ -270,7 +270,7 @@ resources:
           spec:
             environment_version: "5"
 
-      # Weekly, Mondays 09:00 Sydney. Quartz format is
+      # Weekly, Saturdays 19:00 Sydney. Quartz format is
       # `sec min hour day-of-month month day-of-week`; the `?` is required
       # because Quartz forbids specifying both day fields.
       #
@@ -293,7 +293,7 @@ resources:
       # unattended run could fail all four Silver entities, send no email, and
       # report SUCCESS with stale Gold downstream.
       schedule:
-        quartz_cron_expression: "0 0 9 ? * MON"
+        quartz_cron_expression: "0 0 19 ? * SAT"
         timezone_id: Australia/Sydney
 
       email_notifications:
