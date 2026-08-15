@@ -74,9 +74,9 @@ resources:
           subscriptions:
             - user_email: bireshmoktan@gmail.com
 
-      # Checked daily at 08:00, ~13 hours after the Saturday 19:00 run. Daily
+      # Checked daily at 08:00, ~14 hours after the Sunday 18:00 run. Daily
       # rather than weekly so a missed run is caught within a day rather than
-      # sitting undetected until the next scheduled Saturday.
+      # sitting undetected until the next scheduled Sunday.
       schedule:
         quartz_cron_schedule: "0 0 8 * * ?"
         timezone_id: Australia/Sydney
