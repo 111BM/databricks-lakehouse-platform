@@ -197,6 +197,7 @@ def log_reconciliation(
     master_run_id: str,
     layer_run_id: str = None,
     layer: str = "Silver",
+    webhook_url: str = None,
 ):
     """
     Execute the reconciliation query and log it, ERROR when it does not balance.
@@ -204,10 +205,16 @@ def log_reconciliation(
     An unbalanced result is a genuine defect: it means a Bronze row exists that
     no rule explains, which is the property this whole structure exists to
     guarantee. A positive `superseded` count is NOT a defect — it is the normal
-    consequence of incremental loading, and it goes to zero after a replay.
+    consequence of incremental loading, and it goes to zero after a replay. Only
+    the former is routed to `webhook_url`; alerting on the latter would produce a
+    permanently red channel, which is a muted one.
 
     Returns the row so a caller can assert on it.
     """
+    # Imported here rather than inside the `not balanced` branch below: an
+    # import that only runs when something is already wrong has never run, so a
+    # missing module would surface during an incident instead of on a good run.
+    from superstore_alerting import route_alert, should_alert
     from superstore_logger import log_event
 
     row = spark.sql(
@@ -238,5 +245,26 @@ def log_reconciliation(
         layer_run_id=layer_run_id,
         layer=layer,
     )
+
+    # Route only the genuine defect. Logging alone is what let a 5%-of-revenue
+    # orphan problem sit unnoticed: correctly counted, correctly logged, unread.
+    if not balanced:
+        if should_alert("reconciliation_unbalanced", 1):
+            route_alert(
+                logger, webhook_url, "ERROR",
+                f"Reconciliation failed for {entity}",
+                "A Bronze row exists that no rule explains.",
+                fields={
+                    "entity": entity,
+                    "bronze_rows": row["bronze_rows"],
+                    "accounted_rows": row["accounted_rows"],
+                    "silver_rows": row["silver_rows"],
+                    "quarantine_rows": row["quarantine_rows"],
+                    "audit_rows": row["audit_rows"],
+                    "superseded_rows": row["superseded_rows"],
+                },
+                layer=layer,
+                master_run_id=master_run_id,
+            )
 
     return row
