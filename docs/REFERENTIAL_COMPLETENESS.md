@@ -113,6 +113,13 @@ LEFT ANTI JOIN superstore_catalog.<env>_gold.dim_products p
 The number to watch is not the absolute count but whether it **grows per run**. Each
 execution that quarantines another dimension row adds permanently to the orphan set.
 
+> **Since severity tiers shipped, these queries return 0 permanently.** A quarantined
+> dimension no longer strands its facts, so the condition they detect cannot occur — they
+> will read 0 whether the next feed is pristine or badly incomplete. The metric did not
+> become wrong; it went blind, because the failure moved. Its successor counts how much of
+> each dimension is a `'Unknown'` placeholder: `superstore_placeholder_monitor`, logged from
+> both dimension-driven marts. See **[SEVERITY_TIERS.md](SEVERITY_TIERS.md)**.
+
 ---
 
 ## What was NOT changed, and why
@@ -132,28 +139,32 @@ leaves the policy unexamined.
 Inferred members remain the correct answer if a genuine late-arriving dimension case appears
 — a second source with its own schedule, for example.
 
-### Data-quality severity tiers — the real fix, deferred
+### Data-quality severity tiers — built
 
-The root cause is that **every column is treated as equally fatal**. A malformed
-`postal_code` currently removes a customer, and all of their revenue, from every report. That
-is a severe consequence for a field nothing aggregates on.
+The root cause was that **every column was treated as equally fatal**. A customer missing a
+`postal_code` was removed, with all of their revenue, from every report — a severe
+consequence for a field nothing aggregates on.
 
-The correct design classifies columns:
+Violations are now tiered. Only business keys are fatal; a descriptive violation is recorded
+in `repaired_columns` and the row continues to Silver, with Gold substituting `'Unknown'` so
+no dimension attribute is ever null. Orphaned facts went to **zero** in dev: 49,539 → 0 for
+products and 62 → 0 for customers.
 
-| Tier | Columns | On violation |
-|---|---|---|
-| Fatal | business keys (`customer_id`), type-critical fields | quarantine the row |
-| Repairable | `customer_name`, `segment`, `country`, `state`, `postal_code` | null the value, keep the row, record the violation |
+**The concern recorded here was that it would restructure the reconciliation invariant.**
+That turned out to be true, though not in the way anticipated. Repaired rows land in Silver
+and the three-bucket arithmetic still balances — but building this exposed a *pre-existing*
+weakness: the invariant never held under incremental loading at all, because a MERGE that
+updates a row in place leaves the superseded version in no bucket. It now carries a fourth,
+derived term. See **[RECONCILIATION_INVARIANT.md](RECONCILIATION_INVARIANT.md)**.
 
-Quarantine would then mean *this row cannot be trusted at all*, rather than *this row is
-imperfect* — which is what quarantine should mean.
+Two further defects surfaced only after tiers shipped, both recorded in
+**[SEVERITY_TIERS.md](SEVERITY_TIERS.md)**: an incomplete row could beat a complete one in
+deduplication and overwrite a known value with a placeholder (81 of 99 cases), and
+substitution originally replaced only NULLs, so an *invalid* value like `segment='Premium'`
+reached the dimension looking legitimate.
 
-**Why it was deferred:** it restructures the reconciliation invariant. Today every row is in
-exactly one bucket. A repaired row would be in Silver *and* carry a recorded violation, so
-repairs become an attribute of a Silver row rather than a fourth bucket. That is a real
-change to the strongest guarantee in the platform, made to recover five rows in a dataset of
-this size. The trade is not worth it here; it would be worth it at volume, and it is the
-change to make first if this pipeline were ever run for real.
+**What it did not do:** on the real 793 customers and 1,862 products, whose records are
+complete, this recovers nothing. It is preparation for a source that arrives incomplete.
 
 ---
 
