@@ -1,0 +1,140 @@
+# ==============================================================================
+# Unity Catalog governance — plan on PR, apply on merge
+# ==============================================================================
+# Deliberately separate from the bundle deploy workflow, and deliberately NOT on
+# a schedule. Permissions change a few times a year; data moves every day. Giving
+# them one clock was the design mistake this workflow exists to avoid — see
+# docs/UNITY_CATALOG_GRANTS.md ("Why this is Terraform, and not a task in the
+# pipeline").
+#
+# The review gate is the point: a pull request shows exactly which grants would
+# be added and removed, and a human approves that before it reaches the catalog.
+#
+# TWO THINGS THIS DOES NOT YET GUARANTEE:
+#   - Branch protection is what actually forces a reviewer. That is repository
+#     settings, not a file here.
+#   - With no remote state configured (versions.tf), each CI run starts stateless,
+#     so a plan reports every grant as a create and removals of whole schemas from
+#     the model are invisible. Configure the backend before relying on this to
+#     take access AWAY.
+# ==============================================================================
+
+name: Unity Catalog governance
+
+on:
+  pull_request:
+    paths:
+      - "terraform/governance/**"
+      - ".github/workflows/governance.yml"
+  push:
+    branches: [main]
+    paths:
+      - "terraform/governance/**"
+
+defaults:
+  run:
+    working-directory: terraform/governance
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Plan — runs on every PR that touches the model. Never changes anything.
+  # --------------------------------------------------------------------------
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      # Formatting and schema errors should fail here, not in the plan output.
+      - name: Check formatting
+        run: terraform fmt -check -diff
+
+      - name: Init
+        run: terraform init -input=false
+
+      - name: Validate
+        run: terraform validate
+
+      # The plan carries the three policy preconditions with it: a model that
+      # grants SELECT at catalog level, or SELECT without USE_SCHEMA, or a
+      # consumer role on a raw layer, fails at this step rather than at apply.
+      - name: Plan
+        id: plan
+        run: terraform plan -input=false -no-color -out=tfplan
+
+      # Put the diff in the job summary so a reviewer reads permissions changing
+      # without opening logs.
+      - name: Publish plan to job summary
+        if: always()
+        run: |
+          {
+            echo "## Unity Catalog grant plan"
+            echo ""
+            echo '```terraform'
+            terraform show -no-color tfplan || echo "plan unavailable — see the Plan step"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # --------------------------------------------------------------------------
+  # Apply — only from main, and only behind the existing production approval.
+  #
+  # Reuses the `production` GitHub environment that gates bundle deploys, so the
+  # same reviewers approve a permission change and a prod deploy.
+  # --------------------------------------------------------------------------
+  apply:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    environment:
+      name: production
+
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Init
+        run: terraform init -input=false
+
+      - name: Apply
+        run: terraform apply -input=false -auto-approve
+
+      # Who can read what, recorded per apply. The same audit-trail habit as the
+      # prod deploy record in deploy.yml.
+      - name: Record effective access matrix
+        if: always()
+        run: |
+          {
+            echo "=== UNITY CATALOG GRANTS APPLIED ==="
+            echo "Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+            echo "Commit: ${{ github.sha }}"
+            echo "Actor: ${{ github.actor }}"
+            echo ""
+            terraform output -json access_matrix || echo "outputs unavailable"
+          } > access-matrix.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unity-catalog-access-matrix
+          path: terraform/governance/access-matrix.txt
+          retention-days: 365
