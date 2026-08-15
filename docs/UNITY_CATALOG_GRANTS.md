@@ -187,10 +187,17 @@ pipeline still runs as a person who owns these schemas and therefore needs no gr
 (backlog item 1). The privilege model for the writer is already written; closing item 1
 is setting one variable, not designing anything.
 
-**No CI enforcement of the review gate yet.** The workflow in
-`.github/workflows/governance.yml` runs `plan` on pull requests and `apply` behind the
-existing `production` environment approval, but a branch-protection rule is what
-actually forces a reviewer, and that is repository settings rather than a file here.
+**Applying is manual, and CI does not enforce the review gate.**
+`.github/workflows/governance.yml` runs `fmt`, `validate`, `terraform test` and `plan` on
+pull requests that touch the model, and stops there. There is deliberately no apply job:
+the account groups do not exist, so an automated apply on merge would fail on an unknown
+principal every time, and a permanently red workflow is one people stop reading — the
+same argument as not alerting on `superseded > 0`. Grants to a missing principal fail at
+*apply*, not at plan, so the plan stays green and keeps its value meanwhile.
+
+So an apply is a person running `terraform apply` in `terraform/governance`. Even once
+that is automated, a branch-protection rule is what actually forces a reviewer, and that
+is repository settings rather than a file here.
 
 ## See also
 
