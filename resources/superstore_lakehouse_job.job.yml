@@ -270,6 +270,32 @@ resources:
           spec:
             environment_version: "5"
 
+      # Weekly, Mondays 09:00 Sydney. Quartz format is
+      # `sec min hour day-of-month month day-of-week`; the `?` is required
+      # because Quartz forbids specifying both day fields.
+      #
+      # This resource is shared by all three targets. dev and qa are
+      # `mode: development` in databricks.yml, and Databricks Asset Bundles
+      # PAUSE schedules automatically in development mode, so only prod runs it.
+      #
+      # pause_status is deliberately NOT set here. An explicit value OVERRIDES
+      # that preset -- setting UNPAUSED scheduled the dev job to run weekly,
+      # verified by reading the deployed job back from the API. The safety comes
+      # from a preset that is invisible in this file, and stating it explicitly
+      # is exactly what breaks it.
+      #
+      # Weekly rather than daily on purpose. The source is a static dataset, so
+      # a run mostly pays 18 serverless task startups to ingest nothing; weekly
+      # exercises the pipeline and its monitors without pretending to serve an
+      # SLA nobody has asked for.
+      #
+      # Only safe because of the exception-handling fix: before it, an
+      # unattended run could fail all four Silver entities, send no email, and
+      # report SUCCESS with stale Gold downstream.
+      schedule:
+        quartz_cron_expression: "0 0 9 ? * MON"
+        timezone_id: Australia/Sydney
+
       email_notifications:
         on_failure:
           - bireshmoktan@gmail.com
