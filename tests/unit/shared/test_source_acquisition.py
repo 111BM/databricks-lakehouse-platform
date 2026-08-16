@@ -52,16 +52,19 @@ class TestClassifySourceState:
         assert classify_source_state(0, 0) != SOURCE_POPULATED
         assert classify_source_state(0, 0) != SOURCE_DRAINED
 
-    def test_dev_and_qa_today_are_tolerated(self):
-        # Both have an empty source folder but files already landed (2 and 3
-        # respectively). A target-based rule would have had to special-case
-        # them; keying on data does not.
-        assert classify_source_state(0, 2) == SOURCE_DRAINED
-        assert classify_source_state(0, 3) == SOURCE_DRAINED
-
-    def test_one_landed_file_is_enough_to_tolerate_an_empty_source(self):
-        # Boundary: the rule is "anything at all", not "enough to be useful".
-        assert classify_source_state(0, 1) == SOURCE_DRAINED
+    def test_tolerance_scales_with_however_much_has_landed(self):
+        # Any non-zero landing count tolerates an empty source, so no
+        # environment needs special-casing -- which is the whole reason this is
+        # keyed on data rather than on target.
+        #
+        # Deliberately not named after specific environments. The previous name
+        # asserted a claim about dev that was wrong when written and would have
+        # gone stale regardless: which branch an environment takes changes as
+        # its data changes, and a test name is a bad place to record that.
+        # Starts at 1 on purpose: the rule is "anything at all", not "enough to
+        # be useful".
+        for landed in (1, 2, 3, 50):
+            assert classify_source_state(0, landed) == SOURCE_DRAINED
 
     @pytest.mark.parametrize("source,landed", [(-1, 0), (0, -1), (-1, -1)])
     def test_negative_counts_raise(self, source, landed):

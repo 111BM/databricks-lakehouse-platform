@@ -18,11 +18,16 @@ as a clean exit:
 downstream tasks ran against an empty landing volume, and the job reported
 SUCCESS having produced nothing.
 
-That is not hypothetical. `superstore_data_platform/prod` has only ever
-contained a README, so the prod landing volume has never held a single file and
-prod_bronze / prod_silver / prod_metrics are empty -- while four prod runs in
-July 2026 all reported TERMINATED/SUCCESS. Three weeks of green runs on a
-pipeline that had never processed a byte.
+That is not hypothetical. Until 2026-08-16 `superstore_data_platform/prod`
+contained nothing but a README, so the prod landing volume had never held a
+single file and prod_bronze / prod_silver / prod_metrics were empty -- while
+four prod runs in July 2026 all reported TERMINATED/SUCCESS. Three weeks of
+green runs on a pipeline that had never processed a byte.
+
+Resolved on 2026-08-16: a source file was added and prod produced real tables
+for the first time. The guard stays because the condition it detects is rare,
+not impossible -- a new environment, a mistyped source_listing_url, a recreated
+volume, or a source folder emptied upstream all reach it again.
 
 The distinction that matters
 ----------------------------
@@ -51,9 +56,14 @@ rejected: an environment allowlist is exactly the shape that silently dropped
 `value_standardization` and then `severity` from the Silver config, and it
 would need editing every time an environment is added.
 
-Keying on what is actually present needs no such list and happens to give the
-right answer everywhere today -- dev and qa have landed files so an empty
-source is tolerated there, prod has nothing so it fails.
+Keying on what is actually present needs no such list, and it tracks reality as
+environments change rather than encoding a snapshot of them. Deliberately NOT
+documented here as a per-environment mapping: an earlier version of this
+docstring claimed "dev and qa have landed files so an empty source is tolerated
+there", which was wrong about dev the day it was written (dev's source folder
+has a CSV, so dev takes SOURCE_POPULATED) and went stale for prod within hours
+of being committed. The rule is the durable thing; which branch a given
+environment happens to take is not.
 
 Pure so it can be unit tested without a workspace, a volume or a network call.
 ==============================================================
