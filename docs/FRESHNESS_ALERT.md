@@ -48,13 +48,15 @@ reviewed, promoted through dev → qa → prod like any job.
 
 ```sql
 SELECT
-  ROUND((unix_timestamp(current_timestamp()) - unix_timestamp(MAX(end_ts))) / 3600.0, 1)
-    AS hours_since_last_success
+  COALESCE(
+    ROUND((unix_timestamp(current_timestamp()) - unix_timestamp(MAX(end_ts))) / 3600.0, 1),
+    999999
+  ) AS hours_since_last_success
 FROM ${var.catalog}.${var.schema}_metrics.silver_layer_metrics
 WHERE run_status = 'SUCCESS'
 ```
 
-Four decisions in that query and its evaluation, each of which changes what the
+Five decisions in that query and its evaluation, each of which changes what the
 alert is capable of detecting:
 
 **Measured from `silver_layer_metrics`, not the Jobs API.** A job can report
@@ -67,20 +69,41 @@ while failing every table does **not** refresh the clock.
 run, but it is not evidence that processing works, and this alert is about
 whether the pipeline is alive.
 
-**`empty_result_state: TRIGGERED`.** A missing, empty or unreadable metrics table
-fires the alert rather than reporting OK. Silence caused by a broken monitor is
-the exact failure this backlog keeps rediscovering, so the default is set the
-loud way.
+**`COALESCE(..., 999999)`.** An aggregate with no `GROUP BY` returns exactly one
+row however many rows the filter matches. So when nothing has ever succeeded the
+query returns a single **NULL**, not zero rows — and `NULL > 216` evaluates to
+NULL, which is not TRUE, so the alert reported **OK**. A pipeline that had never
+once succeeded looked healthy. The sentinel is unreachable by real elapsed time,
+so seeing it means exactly one thing.
+
+**`empty_result_state: TRIGGERED`.** Kept as a guard for a future query shape
+that *can* return zero rows, but it does not fire for the query as written, and
+it does not cover a missing table either. **An earlier version of this document
+claimed it covered all three cases. That was wrong**, and the error mattered: it
+was the stated justification for not checking the NULL path, which is the one
+that actually reports OK while broken.
+
+What the three cases really do:
+
+| Condition | Result | Alert state | Notifies? |
+|---|---|---|---|
+| Table missing or unreadable | query error | `ERROR` | yes — "query execution failed" |
+| Table present, no successful run | one NULL row | `OK` before the fix, `TRIGGERED` after | now yes |
+| Zero rows returned | unreachable here | `TRIGGERED` | n/a |
+
+The first row is loud but misdirected: the email points at the alert's own SQL,
+so the reader inspects the query rather than the outage beneath it. That is what
+happened on 2026-08-16.
 
 **216 hours, not 168.** The schedule is weekly, so a 7-day threshold would fire
 on any run that slipped by an hour. Nine days means a single late run is
 tolerated and two consecutive misses are not.
 
-Evaluated **daily at 08:00 Sydney**, roughly 13 hours after the Saturday 19:00
-run. Daily rather than weekly so a missed run surfaces within a day instead of
-waiting until the next scheduled Saturday. `retrigger_seconds: 86400` caps it at
-one notification per day while it stays broken, and `notify_on_ok: true` closes
-the incident when it recovers.
+Evaluated **daily at 08:00 Sydney**, about 2 hours after the Sunday 06:00 run.
+Daily rather than weekly so a missed run surfaces within a day instead of waiting
+until the next scheduled Sunday. `retrigger_seconds: 86400` caps it at one
+notification per day while it stays broken, and `notify_on_ok: true` closes the
+incident when it recovers.
 
 ## Where
 
@@ -108,7 +131,13 @@ whatever the original CSV held regardless of how often the pipeline runs — a
 recency check on the data would be permanently red. With a real vendor feed both
 would be worth having; here only the first is meaningful.
 
-**Delivery is unverified.** The alert is defined and validates across all three
-targets, and the query has been run against real metrics. Nothing has yet
-confirmed that a triggered alert arrives — that needs either a deliberately
-lowered threshold or a genuinely missed run.
+**Delivery is verified — accidentally.** On 2026-08-16 the alert evaluated at
+08:00 Sydney, found `prod_metrics.silver_layer_metrics` did not exist, entered
+`ERROR` and emailed. So the whole chain works end to end: schedule fires,
+evaluation runs, notification arrives.
+
+What is still unverified is the **TRIGGERED** path specifically. The email that
+arrived was the ERROR one. Confirming a genuine staleness alert needs either a
+temporarily lowered threshold or a prod that has succeeded at least once and
+then stopped — neither of which is true yet, because prod has never produced a
+metrics table at all.

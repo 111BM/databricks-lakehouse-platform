@@ -40,11 +40,27 @@ resources:
       # Schema is parameterised: hardcoding prod_metrics would have made the
       # dev and qa copies of this alert monitor PRODUCTION, so a healthy prod
       # would silence all three while dev sat broken.
+      #
+      # COALESCE is load-bearing, not defensive tidiness. An aggregate with no
+      # GROUP BY returns exactly ONE row whatever the filter matches, so when no
+      # run has ever succeeded this query yields a single NULL rather than zero
+      # rows. NULL > 216 evaluates to NULL, which is not TRUE, so the alert
+      # reported OK -- silence, from a pipeline that had never once succeeded.
+      #
+      # 999999 hours is a sentinel: no real elapsed time reaches it, so the only
+      # way to see it is the "never succeeded" case, and it breaches every
+      # plausible threshold.
+      #
+      # Note this is NOT the same hole as empty_result_state below. That one
+      # covers zero ROWS, which this query cannot produce.
       query_text: |
         SELECT
-          ROUND(
-            (unix_timestamp(current_timestamp()) - unix_timestamp(MAX(end_ts))) / 3600.0,
-            1
+          COALESCE(
+            ROUND(
+              (unix_timestamp(current_timestamp()) - unix_timestamp(MAX(end_ts))) / 3600.0,
+              1
+            ),
+            999999
           ) AS hours_since_last_success
         FROM ${var.catalog}.${var.schema}_metrics.silver_layer_metrics
         WHERE run_status = 'SUCCESS'
@@ -58,10 +74,18 @@ resources:
           value:
             double_value: 216
 
-        # A missing or empty result is NOT healthy. If the metrics table is
-        # absent, empty, or unreadable the alert must fire rather than report OK
-        # -- silence caused by a broken monitor is the failure mode this whole
-        # backlog keeps rediscovering.
+        # Retained as a guard for a future query shape that CAN return zero rows
+        # -- add a GROUP BY and it becomes reachable. It does NOT fire for the
+        # query as written: an aggregate without GROUP BY always returns one
+        # row, so "never succeeded" is handled by the COALESCE above, not here.
+        # An earlier version of this file claimed otherwise.
+        #
+        # It also does not cover a MISSING table. That is a query error rather
+        # than an empty result: the alert enters state ERROR and Databricks
+        # emails "query execution failed, please check the alert query text".
+        # Confirmed on 2026-08-16, when prod_metrics.silver_layer_metrics did
+        # not exist. Loud, but it points the reader at this SQL instead of at
+        # the pipeline outage underneath it.
         empty_result_state: TRIGGERED
 
         notification:
