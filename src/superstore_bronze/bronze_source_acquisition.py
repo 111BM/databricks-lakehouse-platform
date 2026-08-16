@@ -116,9 +116,6 @@ source_files = [
     if item["type"] == "file" and item["name"].endswith((".csv", ".csv.gz"))
 ]
 
-if not source_files:
-    dbutils.notebook.exit(f"NO_SOURCE_FILES env={env} at {listing_url}")
-
 # COMMAND ----------
 
 try:
@@ -127,13 +124,46 @@ except Exception:
     # Landing folder does not exist yet (first run in a fresh environment)
     already_landed = set()
 
+# COMMAND ----------
+
+# An empty source is not automatically an error, but it is not automatically
+# fine either -- and the old code assumed the latter, exiting cleanly whenever
+# the listing held no data files. dbutils.notebook.exit SUCCEEDS, so prod spent
+# three weeks reporting green runs while never processing a single byte.
+#
+# The landing zone is what separates the two cases, which is why it is listed
+# above this check rather than below it. See superstore_source_acquisition.
+from superstore_source_acquisition import (
+    NO_DATA_ANYWHERE,
+    SOURCE_DRAINED,
+    classify_source_state,
+    no_data_anywhere_message,
+)
+
+source_state = classify_source_state(len(source_files), len(already_landed))
+print(f"source={len(source_files)} landed={len(already_landed)} state={source_state}")
+
+if source_state == NO_DATA_ANYWHERE:
+    raise RuntimeError(no_data_anywhere_message(env, listing_url, landing))
+
+if source_state == SOURCE_DRAINED:
+    # The vendor aged its files out. Everything already landed is still there,
+    # so downstream can legitimately re-derive from it -- but say so loudly,
+    # because a source that has genuinely gone away looks identical from here.
+    dbutils.notebook.exit(
+        f"SOURCE_DRAINED env={env}: no data files at {listing_url}, continuing on "
+        f"{len(already_landed)} file(s) already in {landing}"
+    )
+
+# COMMAND ----------
+
 # Sorted so dated filenames land in chronological order
 new_files = sorted(
     (f for f in source_files if f["name"] not in already_landed),
     key=lambda f: f["name"],
 )
 
-print(f"source={len(source_files)} landed={len(already_landed)} new={len(new_files)}")
+print(f"new={len(new_files)}")
 
 # COMMAND ----------
 
