@@ -81,6 +81,11 @@ DRIFT_NEW = "NEW"
 # This one is fatal downstream -- the entity split's select() will raise on it.
 DRIFT_MISSING = "MISSING"
 
+# Not a column-level event: the per-run count of rows Auto Loader could not fit
+# into the inferred schema. This is the ONLY signal for a type change, which is
+# otherwise completely silent -- the typed column simply goes NULL.
+DRIFT_RESCUED = "RESCUED"
+
 
 def is_pipeline_column(column: str) -> bool:
     """
@@ -218,6 +223,171 @@ def drift_rows(
         for status, columns in ((DRIFT_NEW, drift["new"]), (DRIFT_MISSING, drift["missing"]))
         for column in columns
     ]
+
+
+def rescue_column_of(observed_columns):
+    """
+    Find Auto Loader's rescue column, or None if the reader was not configured
+    with one.
+
+    Returned rather than assumed, because the prefix is chosen by the reader --
+    `col__rescued_data` in this workspace -- and a hardcoded name would make the
+    type-drift signal silently unavailable if that ever changed.
+    """
+    for column in observed_columns:
+        if column.endswith(RESCUE_COLUMN_SUFFIX):
+            return column
+    return None
+
+
+def record_schema_drift(
+    spark,
+    logger,
+    raw_table: str,
+    drift_table: str,
+    bronze_entities: dict,
+    ignored_source_columns=None,
+    master_run_id: str = None,
+    layer_run_id: str = None,
+    env: str = None,
+    layer: str = "Bronze",
+) -> dict:
+    """
+    Detect drift against the live raw table and record it.
+
+    Impure half of this module, matching the `reconciliation_sql` /
+    `log_reconciliation` split used elsewhere: the comparison is pure and
+    unit-tested, this executes it.
+
+    Deliberately does NOT change behaviour. An undeclared column is still
+    dropped at the entity split; this only stops that happening in silence. A
+    new column entering Silver must remain a human decision -- see
+    docs/SCHEMA_DRIFT.md.
+
+    Call it AFTER Bronze ingest and BEFORE the entity loop. That ordering is the
+    point of the MISSING case: `select()` on an absent column raises an opaque
+    AnalysisException, whereas this names the column and says why it matters
+    while the run is still in a position to explain itself.
+
+    Log severity is graded, because treating these alike is how alert channels
+    get muted:
+        MISSING  -> ERROR. The entity split is about to fail.
+        RESCUED  -> ERROR. Values are being silently discarded.
+        NEW      -> WARNING. Nothing is broken; the model is ignoring data.
+        stable   -> INFO.
+
+    Returns the drift dict with `rescued_rows` added, so a caller or a test can
+    assert on it.
+    """
+    from superstore_logger import log_event
+
+    observed = spark.table(raw_table).columns
+    drift = detect_drift(observed, bronze_entities, ignored_source_columns)
+
+    # Cumulative across the whole raw table, not scoped to this run. Deliberate:
+    # the expected value is 0 forever, so any non-zero deserves attention
+    # regardless of which run produced it, and scoping would let an old rescue
+    # scroll out of view unexamined.
+    rescue_column = rescue_column_of(observed)
+    rescued_rows = 0
+    if rescue_column:
+        rescued_rows = (
+            spark.table(raw_table)
+            .where(f"`{rescue_column}` IS NOT NULL")
+            .count()
+        )
+    drift["rescued_rows"] = rescued_rows
+
+    if drift["missing"] or rescued_rows:
+        severity = "ERROR"
+    elif drift["new"]:
+        severity = "WARNING"
+    else:
+        severity = "INFO"
+
+    log_event(
+        logger,
+        severity,
+        f"{drift_summary(drift)} | rescued_rows={rescued_rows}",
+        schema_drift_new=drift["new"],
+        schema_drift_missing=drift["missing"],
+        schema_drift_ignored=drift["ignored"],
+        rescued_rows=rescued_rows,
+        master_run_id=master_run_id,
+        layer_run_id=layer_run_id,
+        layer=layer,
+    )
+
+    rows = drift_rows(drift, master_run_id, env)
+
+    # The RESCUED row is written every run, unlike NEW/MISSING which are written
+    # only when they occur. It is a measurement rather than an event, and a row
+    # per run doubles as proof the check actually executed -- an empty table is
+    # otherwise indistinguishable from a detector that never ran.
+    if rescue_column:
+        rows.append(
+            {
+                "master_run_id": master_run_id,
+                "env": env,
+                "column_name": rescue_column,
+                "drift_status": DRIFT_RESCUED,
+                "detected_at": datetime.now(),
+            }
+        )
+
+    _write_drift_rows(spark, drift_table, rows, rescued_rows)
+    return drift
+
+
+def _write_drift_rows(spark, drift_table: str, rows: list, rescued_rows: int):
+    """
+    Append drift observations, creating the table on first write.
+
+    Separated so `record_schema_drift` stays readable and so the schema is
+    declared in exactly one place -- an inferred schema would flip
+    `row_count` to a different type on the first run that has no rescue column.
+    """
+    if not rows:
+        return
+
+    from pyspark.sql.types import (
+        LongType,
+        StringType,
+        StructField,
+        StructType,
+        TimestampType,
+    )
+
+    schema = StructType(
+        [
+            StructField("master_run_id", StringType(), True),
+            StructField("env", StringType(), True),
+            StructField("column_name", StringType(), True),
+            StructField("drift_status", StringType(), True),
+            StructField("row_count", LongType(), True),
+            StructField("detected_at", TimestampType(), True),
+        ]
+    )
+
+    payload = [
+        (
+            r.get("master_run_id"),
+            r.get("env"),
+            r.get("column_name"),
+            r.get("drift_status"),
+            int(rescued_rows) if r.get("drift_status") == DRIFT_RESCUED else None,
+            r.get("detected_at"),
+        )
+        for r in rows
+    ]
+
+    (
+        spark.createDataFrame(payload, schema)
+        .write.format("delta")
+        .mode("append")
+        .option("mergeSchema", "true")
+        .saveAsTable(drift_table)
+    )
 
 
 def drift_summary(drift: dict) -> str:

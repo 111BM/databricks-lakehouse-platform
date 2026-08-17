@@ -29,6 +29,7 @@ from superstore_schema_drift import (
     drift_rows,
     drift_summary,
     is_pipeline_column,
+    rescue_column_of,
     source_columns,
 )
 
@@ -77,6 +78,21 @@ class TestPipelineColumnExclusion:
         assert "col__rescued_data" not in got
         assert "bronze_ingestion_ts" not in got
         assert "customer_id" in got
+
+
+@pytest.mark.unit
+class TestRescueColumnLookup:
+
+    def test_finds_the_rescue_column_by_suffix(self):
+        # Auto Loader names it, not us. Hardcoding `col__rescued_data` would
+        # make the type-drift signal silently unavailable if the reader config
+        # ever changed the prefix.
+        assert rescue_column_of(RAW_COLUMNS) == "col__rescued_data"
+
+    def test_returns_none_when_no_rescue_column_exists(self):
+        # A reader configured without one is legitimate; the caller then skips
+        # the rescue count rather than crashing on a missing column.
+        assert rescue_column_of(["customer_id", "sales"]) is None
 
 
 @pytest.mark.unit

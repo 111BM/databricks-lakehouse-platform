@@ -17,9 +17,9 @@ Implemented in
 25 unit tests in
 [`tests/unit/shared/test_schema_drift.py`](../tests/unit/shared/test_schema_drift.py).
 
-**Status: detection logic only.** The function exists and is tested; it is not
-yet called by the pipeline and no `schema_drift` metrics table is written. See
-[What is not built](#what-is-not-built).
+**Status: wired and recording.** The Bronze orchestrator calls it once per run
+and writes to `{env}_metrics.schema_drift`. Not yet proven against real drift —
+see [What is not built](#what-is-not-built).
 
 ## Why
 
@@ -157,29 +157,60 @@ expectation is that this reports `SCHEMA_STABLE` indefinitely.
 |---|---|
 | Detection logic | `src/superstore_shared_utilities/superstore_schema_drift.py` |
 | Unit tests | `tests/unit/shared/test_schema_drift.py` |
+| Call site | `superstore_bronze_layer_ETL_pipeline_orchestrator.ipynb`, step `1b` |
+| Recorded to | `{env}_metrics.schema_drift` |
 | Ignore decisions | `ignored_source_columns` in `configs/superstore_bronze_config/` |
 | Column contracts | `bronze_entities.*.columns`, same file |
 | The drop itself | `bronze_entity_superstore_module_02.py:523` |
 | Rescued values | `col__rescued_data` on `{env}_bronze.superstore_raw` |
 
+## The table
+
+`{env}_metrics.schema_drift`, appended once per run:
+
+| Column | Meaning |
+|---|---|
+| `master_run_id` | run that observed it |
+| `env` | dev / qa / prod / integration_test |
+| `column_name` | the drifted column, or the rescue column for `RESCUED` |
+| `drift_status` | `NEW` / `MISSING` / `RESCUED` |
+| `row_count` | non-null rescued rows; `NULL` for `NEW`/`MISSING` |
+| `detected_at` | observation time |
+
+`NEW` and `MISSING` rows appear only when they occur. **`RESCUED` is written
+every run**, even at zero — it is a measurement rather than an event, and a row
+per run doubles as proof the check executed. A run with no `schema_drift` row is
+itself evidence the detector did not run, which is the failure a monitor is
+least likely to notice about itself.
+
+### Why the check does not fail the run
+
+`record_schema_drift` is wrapped in a `try/except` that logs at `ERROR` and
+continues. That cuts against this codebase's usual rule, so the reasoning is
+recorded rather than assumed.
+
+Every other swallowed exception fixed here was wrapping a **data** operation,
+where a silent failure meant wrong or missing rows. This is an **instrument**.
+If it breaks, the load is still correct — and failing the run would make adding
+a monitor strictly riskier than having none, which is how teams stop adding them.
+
+The trade is only acceptable because the failure is *detectable*: it logs at
+ERROR, and the per-run `RESCUED` heartbeat means a broken monitor can be found by
+querying the very table it failed to write.
+
 ## What is not built
 
-Stated plainly rather than implied, because a detector that is written but not
-called reports nothing just as reliably as one that is broken:
+**Not proven against real drift.** The integration test seeds its own data, so
+adding a column to the seed and asserting `schema_drift` records it is possible
+here — and that step is what separates a detector from a detector you know
+works. Not done.
 
-1. **The pipeline does not call it.** No wiring into
-   `bronze_entity_superstore_module_02` yet.
-2. **No `schema_drift` metrics table.** `drift_rows()` produces the rows; nothing
-   writes them.
-3. **`col__rescued_data` is still unread.** Counting non-null values per run is
-   the type-drift signal and is not yet collected.
-4. **Not proven against real drift.** The integration test seeds its own data, so
-   adding a column to the seed and asserting the drift table records it *is*
-   possible here — and that step is what separates a detector from a detector you
-   know works. Not done.
+**No alerting.** Deliberate, and covered under [When](#when).
 
 What **is** verified: the logic runs against the shipped config and the real
 `prod_bronze.superstore_raw` schema, reports `SCHEMA_STABLE` with one knowingly
 ignored column, and reports `discount_reason` when a new column is simulated. A
 test runs that comparison against the real config file rather than a fixture, so
-it fails if someone declares a column that no longer arrives.
+it fails if someone declares a column that no longer arrives. The wiring itself
+has been validated only by `bundle validate` and the unit suite — no pipeline run
+has yet executed it.
