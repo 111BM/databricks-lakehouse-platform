@@ -52,10 +52,21 @@ RAW_TABLE = table(get_bronze_schema(), "superstore_raw")
 print(f"drift table: {DRIFT_TABLE}")
 
 failures = []
+checks_run = []
+
+# Every check below must execute. The first version of this notebook put the
+# `# MAGIC %md` headings in the SAME cell as the code beneath them, which makes
+# Databricks treat the whole cell as markdown -- so not one assertion ran, and
+# the notebook exited "OK" having verified nothing.
+#
+# A green run proving nothing is the exact failure this suite exists to catch,
+# so the count is asserted rather than trusted.
+EXPECTED_CHECKS = 11
 
 
 def check(condition, message):
     """Collect rather than raise, so one run reports every failure at once."""
+    checks_run.append(message)
     if condition:
         print(f"PASS  {message}")
     else:
@@ -77,6 +88,8 @@ for r in rows:
 
 # MAGIC %md
 # MAGIC ## 1. Heartbeat — the detector ran on every load
+
+# COMMAND ----------
 
 rescued = by_status.get("RESCUED", [])
 distinct_runs = {r["master_run_id"] for r in rescued}
@@ -103,6 +116,8 @@ check(
 # MAGIC The check the entire feature rests on. Everything else only proves the
 # MAGIC detector stays quiet, which is also what a broken one does.
 
+# COMMAND ----------
+
 new_rows = by_status.get("NEW", [])
 new_columns = {r["column_name"] for r in new_rows}
 
@@ -119,6 +134,8 @@ check(
 # MAGIC It arrives in every file and no entity declares it. Without the
 # MAGIC `ignored_source_columns` decision it would be reported on every run
 # MAGIC forever, and a permanently red monitor is a muted one.
+
+# COMMAND ----------
 
 check(
     "row_id" not in new_columns,
@@ -138,6 +155,8 @@ check(
 # MAGIC detector that quietly started widening the contract would be worse than
 # MAGIC no detector at all.
 
+# COMMAND ----------
+
 raw_columns = set(spark.table(RAW_TABLE).columns)
 check(
     "discount_reason" in raw_columns,
@@ -153,10 +172,27 @@ for entity in ("customers", "products", "orders", "sales"):
 
 # COMMAND ----------
 
+summary = {status: len(v) for status, v in sorted(by_status.items())}
+
+# The diagnostic goes in the EXIT STRING, not a print(). The Databricks Jobs API
+# returns only `notebook_output` for a notebook task -- cell output is
+# unreachable, and `export-run` returns an HTML shell that loads content via
+# JavaScript. A print() here is visible solely to a human opening the run in a
+# browser, which is how the previous no-op version looked healthy to every
+# automated check.
+state = f"rows={len(rows)} by_status={summary} checks_run={len(checks_run)}"
+
+if len(checks_run) != EXPECTED_CHECKS:
+    raise AssertionError(
+        f"only {len(checks_run)} of {EXPECTED_CHECKS} assertions executed -- "
+        f"the notebook is not running the checks it appears to contain "
+        f"(a `# MAGIC %md` heading sharing a cell with code will do this). {state}"
+    )
+
 if failures:
     raise AssertionError(
-        f"{len(failures)} schema-drift assertion(s) failed:\n  - "
+        f"{len(failures)} schema-drift assertion(s) failed. {state}\n  - "
         + "\n  - ".join(failures)
     )
 
-dbutils.notebook.exit(f"SCHEMA_DRIFT_ASSERTIONS_OK ({len(rows)} drift row(s))")
+dbutils.notebook.exit(f"SCHEMA_DRIFT_ASSERTIONS_OK {state}")
