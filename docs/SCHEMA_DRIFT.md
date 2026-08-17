@@ -46,9 +46,37 @@ What is wrong is that the decision happens *by silence*.
 
 | Drift | What happens today | Loud? |
 |---|---|---|
-| Column **added** | lands in `superstore_raw`, dropped at the split | silent |
+| Column **added** | see below — **not yet verified** | probably both |
 | Column **removed** | `select()` raises `AnalysisException` | **loud** |
 | Column **retyped** | value rescued, typed column goes NULL | silent |
+
+### The added case is not as simple as it was first written here
+
+An earlier version of this document, and the commit that introduced the
+detector, both said an added column is *silently* dropped. That is likely wrong
+for the **first** encounter.
+
+`cloudFiles.schemaEvolutionMode = addNewColumns` is documented to **fail the
+stream** with `UnknownFieldException` when an unknown column appears, write the
+updated schema to the schema location, and require a restart. Nothing in
+`bronze_ingest_superstore_module_01` handles that — `grep` for
+`UnknownField|retry|restart` returns nothing.
+
+So the real sequence is probably:
+
+1. run fails — loud, but with an error naming no business cause
+2. someone reruns
+3. the column lands in `superstore_raw`
+4. the entity split drops it — silent from here on
+
+That does not make the detector less useful; it arguably makes it more so.
+Without it you get one baffling failure, a rerun that goes green, and no record
+anywhere of what changed or that a new column now exists unused.
+
+**This is stated as uncertain because it has never been observed on this
+platform.** The integration suite now manufactures the event (see below), and
+whatever it does is the answer. If the stream does fail, restart handling is a
+real gap in backlog item 2 and a bigger one than detection.
 
 The loud one is the safe one — it fails the same day and someone fixes it. The
 quiet ones are the problem, and they are quiet in different ways:
@@ -198,14 +226,50 @@ The trade is only acceptable because the failure is *detectable*: it logs at
 ERROR, and the per-run `RESCUED` heartbeat means a broken monitor can be found by
 querying the very table it failed to write.
 
+## Proving it fires
+
+The detector reports `SCHEMA_STABLE` in every environment, because the source is
+a static CSV and no column has ever appeared. **A detector that has only ever
+said "nothing to report" is indistinguishable from one that cannot report** —
+and this platform has already shipped that exact thing twice: the freshness
+alert evaluated daily while structurally unable to breach its own threshold, and
+the orphaned-fact counters read 0 permanently once severity tiers made their
+condition impossible.
+
+So the suite manufactures the event. `02_seed_scd2_change` now sends a
+`Discount Reason` column the first seed did not, appended last — an additive
+change at the end is what a real source change looks like, and inserting it
+mid-header would additionally test positional parsing and muddy what a red run
+means. It sanitises to `discount_reason`, since unmapped columns fall through to
+`sanitize_column()`.
+
+[`assert_schema_drift`](../tests/integration_databricks/assert_schema_drift.py)
+then requires four things:
+
+1. **Heartbeat** — one `RESCUED` row per load. A run missing its row means the
+   detector did not execute, which is the failure a monitor is least likely to
+   notice about itself, and the reason `record_schema_drift` is allowed to
+   swallow its own exceptions.
+2. **It fires** — `discount_reason` recorded as `NEW`. Without this the whole
+   feature is unfalsifiable.
+3. **No false positives** — `row_id` must not be reported, and no `MISSING`.
+4. **Behaviour unchanged** — `discount_reason` present in `superstore_raw` and
+   absent from all four entity tables. A detector that quietly started widening
+   the contract would be worse than none.
+
+The task is wired as a leaf off `run_pipeline_incremental_load`, and `cleanup`
+depends on it as well as on `assert_replay` — otherwise cleanup can start
+dropping `integration_test_*` while the assertions are still reading them, which
+is the same race `max_concurrent_runs: 1` closes between runs, reintroduced
+inside a single run by adding a parallel branch.
+
 ## What is not built
 
-**Not proven against real drift.** The integration test seeds its own data, so
-adding a column to the seed and asserting `schema_drift` records it is possible
-here — and that step is what separates a detector from a detector you know
-works. Not done.
-
 **No alerting.** Deliberate, and covered under [When](#when).
+
+**Restart handling for `UnknownFieldException`.** If the suite shows Auto Loader
+fails the stream on an unknown column, that gap is real and unaddressed — and
+probably the larger half of backlog item 2.
 
 What **is** verified: the logic runs against the shipped config and the real
 `prod_bronze.superstore_raw` schema, reports `SCHEMA_STABLE` with one knowingly

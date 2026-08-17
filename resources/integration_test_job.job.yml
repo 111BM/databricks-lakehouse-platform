@@ -118,6 +118,27 @@ resources:
               shared_utils_path: ${workspace.file_path}/src/superstore_shared_utilities
           environment_key: integration_test_environment
 
+        # 5b. Schema drift. Runs after the SECOND load because that is the load
+        #     carrying a column the first seed did not send — `Discount Reason`.
+        #
+        #     The detector reports SCHEMA_STABLE in every environment, since the
+        #     source is a static CSV and no column has ever appeared. A detector
+        #     that has only ever said "nothing to report" is indistinguishable
+        #     from one that CANNOT report, and this platform has already shipped
+        #     that twice: the freshness alert evaluated daily while unable to
+        #     breach its own threshold, and the orphaned-fact counters went blind
+        #     the moment severity tiers made their condition impossible.
+        #
+        #     This is the only place the event can be manufactured, so it is the
+        #     only thing that makes the feature falsifiable.
+        - task_key: assert_schema_drift
+          depends_on:
+            - task_key: run_pipeline_incremental_load
+          notebook_task:
+            notebook_path: ${workspace.file_path}/tests/integration_databricks/assert_schema_drift
+            source: WORKSPACE
+          environment_key: integration_test_environment
+
         # 6. Replay leg. The suite ran `incremental` only, so every windowed-mode
         #    defect was invisible to it — an append-only quarantine that doubled
         #    on every replay, and a Gold dimension window on the wrong clock that
@@ -189,9 +210,16 @@ resources:
           environment_key: integration_test_environment
 
         # 7. Always clean up (even if an assertion failed)
+        #
+        # Depends on assert_schema_drift as well as assert_replay. That task is a
+        # LEAF hanging off the incremental load, so without this edge cleanup can
+        # start dropping integration_test_* while it is still reading them — the
+        # same race that max_concurrent_runs closes between runs, reintroduced
+        # inside a single run by adding a parallel branch.
         - task_key: cleanup
           depends_on:
             - task_key: assert_replay
+            - task_key: assert_schema_drift
           run_if: ALL_DONE
           notebook_task:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/04_cleanup_integration
