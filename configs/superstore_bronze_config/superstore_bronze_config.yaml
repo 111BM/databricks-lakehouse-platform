@@ -41,6 +41,27 @@ bronze_main:
     
 
 # -------------------------------
+# -------------------------------
+# Source columns deliberately NOT carried into any entity table.
+# -------------------------------
+# A source column is in exactly one of three states, and this list is the third:
+#
+#   declared in an entity's `columns`  -> carried downstream
+#   listed here                        -> knowingly dropped, decision recorded
+#   neither                            -> SCHEMA DRIFT, nobody has decided
+#
+# Without this list the drift detector reports every deliberate omission on
+# every run, and a monitor that is permanently red is one people stop reading.
+#
+# Adding a column here is a decision, not a silencing: state why.
+ignored_source_columns:
+  # Row number of the CSV, assigned by whoever exported the file. It identifies
+  # a position in a delivery, not a business entity, and it is not stable across
+  # re-exports -- so carrying it downstream would invite joins that break the
+  # next time the vendor re-sorts the file.
+  - row_id
+
+# -------------------------------
 # Bronze entities
 # -------------------------------
 bronze_entities:
