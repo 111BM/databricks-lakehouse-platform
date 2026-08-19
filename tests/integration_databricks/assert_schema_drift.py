@@ -174,13 +174,40 @@ for entity in ("customers", "products", "orders", "sales"):
 
 summary = {status: len(v) for status, v in sorted(by_status.items())}
 
+# Forensics for the qa/dev discrepancy.
+#
+# The identical operation produced opposite outcomes: in dev the retry ADDED
+# discount_reason (28 -> 29 columns, 0 rescued) and schema_drift gained a NEW
+# row; in integration_test the column never appeared and only one drift row was
+# written. Same code, same Auto Loader settings.
+#
+# `cleanup` drops integration_test_* the moment this task finishes, so the
+# tables cannot be inspected afterwards -- which is why every question so far has
+# had to be answered by guessing. These four facts travel out in the exit string
+# instead, and settle it in one run:
+#
+#   raw_cols / raw_has_dr  did the retry add the column, or not
+#   raw_rescued            or did the value go into col__rescued_data
+#   drift_runs             how many distinct pipeline runs wrote a heartbeat
+rescued_in_raw = spark.table(RAW_TABLE).where("col__rescued_data IS NOT NULL").count()
+drift_runs = sorted({r["master_run_id"] for r in rows})
+
+forensics = (
+    f"raw_cols={len(raw_columns)} "
+    f"raw_has_dr={'discount_reason' in raw_columns} "
+    f"raw_rescued={rescued_in_raw} "
+    f"drift_runs={len(drift_runs)}"
+)
+
 # The diagnostic goes in the EXIT STRING, not a print(). The Databricks Jobs API
 # returns only `notebook_output` for a notebook task -- cell output is
 # unreachable, and `export-run` returns an HTML shell that loads content via
 # JavaScript. A print() here is visible solely to a human opening the run in a
 # browser, which is how the previous no-op version looked healthy to every
 # automated check.
-state = f"rows={len(rows)} by_status={summary} checks_run={len(checks_run)}"
+state = (
+    f"rows={len(rows)} by_status={summary} checks_run={len(checks_run)} {forensics}"
+)
 
 if len(checks_run) != EXPECTED_CHECKS:
     raise AssertionError(
