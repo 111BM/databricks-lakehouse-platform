@@ -459,6 +459,123 @@ def get_bronze_backfill_config(backfill_config: Dict) -> Tuple[bool, Optional[st
     return False, None  # Normal operation
 
 
+# ==============================================================================
+# Backfill file identity — "have we already ingested this file?"
+# ==============================================================================
+# A backfill exists to fetch what is MISSING in a window, not to reload the
+# window. That distinction was not enforced, and the consequence was measured in
+# dev on 2026-08-20: a backfill over 2026-07-27 re-ingested a file that had
+# landed weeks earlier, taking Superstore_12-02-2026.csv from 505 rows to 1,010.
+#
+# The cause is structural rather than accidental. `backfill` sets
+# includeExistingFiles=True and uses a per-window checkpoint
+# (_backfill_YYYYMMDD_YYYYMMDD) so it cannot disturb the incremental checkpoint
+# the scheduled runs depend on -- which is correct, and which also guarantees
+# Auto Loader has no memory of any file in that window. Every in-window file
+# looks new, and the Bronze write is a plain append with no deduplication.
+#
+# Why it stayed invisible: bronze_ingestion_ts is re-stamped on re-read, so the
+# duplicates are not identical rows. Silver's latest-arrival-wins dedup keeps
+# one, the loser goes to the audit table, and every downstream count stays
+# plausible. The reconciliation invariant still BALANCES -- bronze == silver +
+# quarantine + audit + superseded holds perfectly, because the extra rows are
+# accounted for. It proves rows are accounted for, not that they should exist.
+# ==============================================================================
+
+# Separator between the two halves of a file's identity. A pipe cannot appear in
+# a timestamp and is vanishingly unlikely in a source filename.
+FILE_IDENTITY_SEP = "|"
+
+# The window matched files, and at least one has never been ingested.
+BACKFILL_HAS_WORK = "HAS_WORK"
+
+# The window matched files and every one is already in Bronze. Healthy: the gap
+# this backfill was asked to fill is already filled.
+BACKFILL_NOTHING_MISSING = "NOTHING_MISSING"
+
+# The window matched no files at all. Suspicious rather than healthy -- someone
+# asked for a date range in which nothing was ever delivered, which is far more
+# often a typo than a fact. Distinguished from the case above for the same
+# reason SOURCE_DRAINED is distinguished from NO_DATA_ANYWHERE in
+# superstore_source_acquisition: "nothing to do" and "you asked the wrong
+# question" must not look identical.
+BACKFILL_WINDOW_MATCHED_NOTHING = "WINDOW_MATCHED_NOTHING"
+
+
+def file_identity(source_file_name: str, modification_time) -> str:
+    """
+    Identity of one delivered file.
+
+    Keyed on name AND modification time, not name alone. A vendor re-exporting
+    the same filename with new content is a real event, and skipping it on name
+    would drop genuine data -- the opposite failure to the one being fixed, and
+    a worse one. Both fields already exist on superstore_raw, so this costs no
+    extra read.
+
+    Not a content hash: knowing the hash requires reading the file, which
+    defeats the point of deciding whether to read it.
+    """
+    return f"{source_file_name}{FILE_IDENTITY_SEP}{modification_time}"
+
+
+def backfill_exclusion_predicate(already_ingested) -> Optional[str]:
+    """
+    SQL predicate keeping only files Bronze has never seen.
+
+    Args:
+        already_ingested: iterable of (source_file_name, modification_time)
+            pairs currently present in the Bronze raw table.
+
+    Returns:
+        A predicate string, or None when nothing has been ingested yet -- in
+        which case there is nothing to exclude and the caller must NOT filter.
+        Returning a predicate that matches everything would be equivalent, but
+        None makes the "first backfill on an empty table" case explicit at the
+        call site rather than implied.
+    """
+    identities = sorted(
+        {file_identity(name, mtime) for name, mtime in already_ingested}
+    )
+    if not identities:
+        return None
+
+    quoted = ", ".join("'" + i.replace("'", "''") + "'" for i in identities)
+    return (
+        f"concat(source_file_name, '{FILE_IDENTITY_SEP}', "
+        f"cast(source_file_modification_time as string)) NOT IN ({quoted})"
+    )
+
+
+def classify_backfill_scope(files_in_window: int, files_already_ingested: int) -> str:
+    """
+    Decide what a backfill is actually looking at, before it writes anything.
+
+    Pure: two counts in, a constant out.
+
+    Raises:
+        ValueError: if more files are reported as already ingested than exist in
+            the window. That cannot happen from real observation, so it means
+            the caller counted two different populations -- and silently
+            classifying it would launder a bug into an operational decision.
+    """
+    if files_in_window < 0 or files_already_ingested < 0:
+        raise ValueError(
+            f"counts cannot be negative (window={files_in_window}, "
+            f"ingested={files_already_ingested})"
+        )
+    if files_already_ingested > files_in_window:
+        raise ValueError(
+            f"more files already ingested ({files_already_ingested}) than exist "
+            f"in the window ({files_in_window}) -- these are different populations"
+        )
+
+    if files_in_window == 0:
+        return BACKFILL_WINDOW_MATCHED_NOTHING
+    if files_already_ingested == files_in_window:
+        return BACKFILL_NOTHING_MISSING
+    return BACKFILL_HAS_WORK
+
+
 def validate_backfill_impact(
     spark,
     table_name: str,

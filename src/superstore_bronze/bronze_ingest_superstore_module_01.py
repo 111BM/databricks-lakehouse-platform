@@ -58,7 +58,8 @@ from pyspark.sql.functions import (
     element_at,          # array/map extraction
     split,               # string splitting
     to_date,             # date conversion
-    lit                  # literal values
+    lit,                 # literal values
+    expr                 # SQL expression, for the backfill exclusion predicate
 )
 
 # -----------------------------
@@ -89,7 +90,12 @@ from superstore_platform_config import (
     table,
     get_env
 )
-from superstore_backfill_utils import get_bronze_backfill_config # backfill
+from superstore_backfill_utils import (  # backfill
+    BACKFILL_WINDOW_MATCHED_NOTHING,
+    backfill_exclusion_predicate,
+    classify_backfill_scope,
+    get_bronze_backfill_config,
+)
 
 # -----------------------------
 # Logger Setup for Bronze Ingestion
@@ -353,6 +359,90 @@ def bronze_ingest_incremental(
             run_mode=backfill_config["mode"],
             start_date=start_date,
             end_date=end_date,
+            master_run_id=master_run_id,
+            layer_run_id=layer_run_id,
+            layer=BRONZE_LAYER
+        )
+
+    # -----------------------------
+    # Step 4b: Exclude files Bronze has already ingested (backfill only)
+    # -----------------------------
+    # A backfill exists to fetch what is MISSING in a window, not to reload the
+    # window -- reloading is what full_refresh is for. Without this, it reloads.
+    #
+    # Measured in dev 2026-08-20: a backfill over 2026-07-27 took
+    # Superstore_12-02-2026.csv from 505 rows to 1,010, an exact duplicate of a
+    # file that had landed weeks earlier. The run reported SUCCESS.
+    #
+    # The cause is structural, not accidental: the per-window checkpoint that
+    # correctly protects the incremental one also guarantees Auto Loader has no
+    # memory of any file in the window, so every in-window file looks new. The
+    # write is a plain append with no deduplication.
+    #
+    # Keyed on name AND modification time. A vendor re-exporting the same
+    # filename with new content is a real event, and skipping it on name alone
+    # would drop genuine data -- the opposite failure, and a worse one.
+    backfill_scope = None
+    if backfill_config and backfill_config["mode"] == "backfill":
+        already_in_window = 0
+        exclusion = None
+
+        if spark.catalog.tableExists(table_name):
+            target = spark.table(table_name)
+            already_ingested = [
+                (r["source_file_name"], r["source_file_modification_time"])
+                for r in target.select(
+                    "source_file_name", "source_file_modification_time"
+                ).distinct().collect()
+            ]
+            exclusion = backfill_exclusion_predicate(already_ingested)
+
+            already_in_window = (
+                target.where(
+                    (to_date(col("source_file_modification_time")) >= lit(start_date))
+                    & (to_date(col("source_file_modification_time")) <= lit(end_date))
+                )
+                .select("source_file_name")
+                .distinct()
+                .count()
+            )
+
+        if exclusion:
+            df_stream = df_stream.filter(expr(exclusion))
+
+        # How many files the window matches AT SOURCE, which is a different
+        # population from what Bronze already holds -- and the two are what make
+        # the classification meaningful. binaryFile is used purely as a file
+        # lister: only path and modificationTime are selected, so no content is
+        # materialised.
+        files_in_window = (
+            spark.read.format("binaryFile")
+            .load(raw_source_file_path)
+            .where(
+                (to_date(col("modificationTime")) >= lit(start_date))
+                & (to_date(col("modificationTime")) <= lit(end_date))
+            )
+            .count()
+        )
+
+        # Distinguishes "the gap is already filled" (healthy) from "you asked for
+        # a range that never had data" (a typo, far more often than a fact).
+        # Both ingest zero rows and both used to report success identically --
+        # the same distinction as SOURCE_DRAINED vs NO_DATA_ANYWHERE in
+        # superstore_source_acquisition.
+        backfill_scope = classify_backfill_scope(files_in_window, already_in_window)
+
+        log_event(
+            logger_bronze_ingest,
+            "WARNING" if backfill_scope == BACKFILL_WINDOW_MATCHED_NOTHING else "INFO",
+            f"Backfill scope {backfill_scope}: window {start_date}..{end_date} "
+            f"matches {files_in_window} source file(s), {already_in_window} of "
+            f"which Bronze already holds and will NOT re-read. A backfill fetches "
+            f"what is missing; reloading known data is full_refresh.",
+            run_mode="backfill",
+            backfill_scope=backfill_scope,
+            files_in_window=files_in_window,
+            files_already_ingested=already_in_window,
             master_run_id=master_run_id,
             layer_run_id=layer_run_id,
             layer=BRONZE_LAYER
