@@ -7,7 +7,12 @@ resources:
         runs the REAL pipeline against isolated integration_test_* schemas
         (SUPERSTORE_ENV=integration_test), then asserts correctness per layer:
         bronze / silver / gold each run as their own task so failures point to
-        the exact layer. Cleanup always runs.
+        the exact layer.
+
+        The environment is reset BEFORE seeding, and cleaned up only on a
+        fully green run. A failed run therefore leaves its integration_test_*
+        schemas intact for a post-mortem, and the next run's reset guarantees
+        the clean start regardless.
 
         Run:   databricks bundle run superstore_integration_test --target qa
         A failed assertion fails its task -> fails the job (non-zero exit) so CI
@@ -18,8 +23,32 @@ resources:
         a helpers_path parameter pointing at the deployed _helpers folder.
 
       tasks:
+        # 0. Reset the isolated environment BEFORE seeding.
+        #
+        # Reuses 04_cleanup_integration, so reset and cleanup can never drift
+        # apart: whatever the end-of-run cleanup drops, this drops too.
+        #
+        # This exists so the end-of-run cleanup no longer has to run after a
+        # FAILURE. Isolation used to be guaranteed by always cleaning up, which
+        # also destroyed the evidence: schemas were dropped seconds after an
+        # assertion failed, so every red run could only be diagnosed from
+        # whatever happened to be in its exit string. That cost most of a day on
+        # 2026-08-20 -- the schema-drift discrepancy could not be measured
+        # because integration_test_metrics no longer existed by the time anyone
+        # looked.
+        #
+        # Guaranteeing the clean start HERE gives the same isolation and leaves
+        # a failed run's tables intact for a post-mortem.
+        - task_key: reset_environment
+          notebook_task:
+            notebook_path: ${workspace.file_path}/tests/integration_databricks/04_cleanup_integration
+            source: WORKSPACE
+          environment_key: integration_test_environment
+
         # 1. Seed dirty data into the isolated raw volume
         - task_key: seed_initial_data 
+          depends_on:
+            - task_key: reset_environment
           notebook_task:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/01_seed_integration_data
             source: WORKSPACE
@@ -348,7 +377,19 @@ resources:
               helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
           environment_key: integration_test_environment
 
-        # 7. Always clean up (even if an assertion failed)
+        # 7. Clean up ON SUCCESS ONLY.
+        #
+        # `run_if: ALL_DONE` used to run this even after a failed assertion,
+        # which dropped the schemas seconds after the failure and left nothing to
+        # investigate. Every red run then had to be diagnosed from its exit
+        # string alone, and anything not anticipated in that string was
+        # unrecoverable -- which is why the schema-drift discrepancy on
+        # 2026-08-20 took hours and ended in reasoning rather than measurement.
+        #
+        # Without run_if, this defaults to ALL_SUCCESS: a green run still leaves
+        # nothing behind, and a red run preserves its tables until the next run's
+        # reset_environment task drops them. Isolation is unchanged; it is now
+        # enforced at the start instead of the end.
         #
         # Depends on assert_schema_drift as well as assert_replay. That task is a
         # LEAF hanging off the incremental load, so without this edge cleanup can
@@ -359,7 +400,6 @@ resources:
           depends_on:
             - task_key: assert_replay
             - task_key: assert_schema_drift
-          run_if: ALL_DONE
           notebook_task:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/04_cleanup_integration
             source: WORKSPACE

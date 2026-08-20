@@ -190,6 +190,40 @@ Two checks now close it, using the snapshot the replay legs already write:
 Every task in the replay legs is now asserted on, which was not true before this
 change *or* after the first version of it.
 
+## A failed run now keeps its evidence
+
+Separate from granularity, but found the same way and worth fixing together.
+
+`cleanup` ran with `run_if: ALL_DONE` — **including after a failed assertion.**
+The schemas were dropped seconds after the failure, so a red run could only ever
+be diagnosed from whatever happened to be in its exit string. Anything not
+anticipated in that string was unrecoverable.
+
+That is not theoretical. On 2026-08-20 the schema-drift discrepancy could not be
+measured, because `integration_test_metrics` no longer existed by the time anyone
+looked. Hours went into reasoning about Auto Loader from configuration instead —
+and that reasoning was wrong twice.
+
+**The fix moves the guarantee, not the property.**
+
+| | Before | After |
+|---|---|---|
+| Clean start | end-of-run cleanup | `reset_environment` task, first |
+| Green run | leaves nothing | leaves nothing |
+| **Red run** | **evidence destroyed** | **tables preserved for post-mortem** |
+
+`reset_environment` reuses `04_cleanup_integration` — the same notebook the
+end-of-run cleanup calls — so the two can never drift apart. Whatever cleanup
+drops, reset drops.
+
+`cleanup` loses `run_if: ALL_DONE` and falls back to the `ALL_SUCCESS` default.
+Isolation is unchanged; it is now enforced at the start rather than the end,
+which is the only ordering where a failure can leave something behind.
+
+The exit-string diagnostics added elsewhere in this suite were a workaround for
+this policy. They are still worth having — the Jobs API returns only
+`notebook_output` — but they no longer have to carry the whole investigation.
+
 ## What is not done
 
 **The remaining two `run_job_task` invocations are ~19.5 minutes** and are staying
