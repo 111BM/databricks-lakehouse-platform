@@ -87,6 +87,69 @@ DRIFT_MISSING = "MISSING"
 DRIFT_RESCUED = "RESCUED"
 
 
+# Substrings identifying Auto Loader's "a new column arrived" failure. Matched on
+# the message rather than the exception class because it surfaces wrapped in a
+# StreamingQueryException, and the class alone cannot distinguish it from any
+# other stream failure -- restarting blindly on those would retry genuine faults.
+#
+# Observed 2026-08-17 in dev and integration_test:
+#   [UNKNOWN_FIELD_EXCEPTION.NEW_FIELDS_IN_FILE] Encountered unknown fields
+#   during parsing: [Discount Reason], which can be fixed by an automatic
+#   retry: true
+SCHEMA_EVOLUTION_MARKERS = ("UNKNOWN_FIELD_EXCEPTION", "NEW_FIELDS_IN_FILE")
+
+
+def is_schema_evolution_error(message: str) -> bool:
+    """
+    True when an exception is Auto Loader reporting a new source column rather
+    than a genuine fault.
+
+    `schemaEvolutionMode = addNewColumns` fails the stream on first sight of an
+    unknown column, records the new schema, and expects a restart. Databricks
+    also auto-retries this error class on its own -- which is how a new column
+    currently produces a red task that silently heals, with nothing saying why.
+
+    Distinguishing it lets the caller restart deliberately and say so, instead
+    of leaving an unexplained failure in the run history.
+    """
+    if not message:
+        return False
+    upper = message.upper()
+    return any(marker in upper for marker in SCHEMA_EVOLUTION_MARKERS)
+
+
+def missing_columns_message(missing, bronze_entities: dict, env: str) -> str:
+    """
+    Build the failure message for a declared column that stopped arriving.
+
+    Without this the failure surfaces from inside the entity split as
+    `AnalysisException: cannot resolve segment`, several steps after the point
+    where the cause was already known -- `detect_drift` computes `missing`
+    before the loop runs.
+
+    Names which entities declared each column, because that is what determines
+    the blast radius and it is not obvious from the column name alone.
+    """
+    claims = []
+    for column in missing:
+        owners = sorted(
+            name
+            for name, cfg in bronze_entities.items()
+            if column in (cfg.get("columns") or [])
+        )
+        claims.append(f"{column} (declared by: {', '.join(owners) or 'nothing'})")
+
+    return (
+        f"SCHEMA_DRIFT_FATAL env={env}: {len(missing)} column(s) declared in the "
+        f"entity configs are no longer present at the source:\n  - "
+        + "\n  - ".join(claims)
+        + "\nThe entity split selects declared columns by name, so it cannot "
+        "proceed. Either the source stopped sending these, or a rename was not "
+        "mirrored in configs/superstore_bronze_config. Failing here rather than "
+        "inside the split so the cause is named at the point it was detected."
+    )
+
+
 def is_pipeline_column(column: str) -> bool:
     """
     True if `column` was added by this pipeline rather than received from the

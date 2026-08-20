@@ -29,6 +29,8 @@ from superstore_schema_drift import (
     drift_rows,
     drift_summary,
     is_pipeline_column,
+    is_schema_evolution_error,
+    missing_columns_message,
     rescue_column_of,
     source_columns,
 )
@@ -78,6 +80,73 @@ class TestPipelineColumnExclusion:
         assert "col__rescued_data" not in got
         assert "bronze_ingestion_ts" not in got
         assert "customer_id" in got
+
+
+@pytest.mark.unit
+class TestSchemaEvolutionErrorDetection:
+
+    # The exact message observed in dev and integration_test on 2026-08-17.
+    REAL = (
+        "StreamingQueryException: [STREAM_FAILED] Query [id = 8d390c29] terminated "
+        "with exception: [UNKNOWN_FIELD_EXCEPTION.NEW_FIELDS_IN_FILE] Encountered "
+        "unknown fields during parsing: [Discount Reason], which can be fixed by "
+        "an automatic retry: true"
+    )
+
+    def test_recognises_the_real_message(self):
+        assert is_schema_evolution_error(self.REAL)
+
+    def test_does_not_match_an_unrelated_stream_failure(self):
+        # Restarting blindly on any StreamingQueryException would retry genuine
+        # faults -- a corrupt file or a permissions error would loop instead of
+        # failing.
+        assert not is_schema_evolution_error(
+            "StreamingQueryException: [STREAM_FAILED] terminated with exception: "
+            "java.io.FileNotFoundException: /Volumes/.../missing.csv"
+        )
+
+    def test_does_not_match_a_missing_column_error(self):
+        # The opposite drift direction. It must NOT be retried -- a removed
+        # column does not fix itself on a second attempt.
+        assert not is_schema_evolution_error(
+            "AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column with "
+            "name `segment` cannot be resolved"
+        )
+
+    def test_empty_and_none_are_safe(self):
+        assert not is_schema_evolution_error("")
+        assert not is_schema_evolution_error(None)
+
+    def test_matching_is_case_insensitive(self):
+        assert is_schema_evolution_error("unknown_field_exception.new_fields_in_file")
+
+
+@pytest.mark.unit
+class TestMissingColumnsMessage:
+
+    def test_names_the_entities_that_declared_it(self):
+        # Which entities claim the column determines the blast radius, and that
+        # is not derivable from the column name.
+        msg = missing_columns_message(["customer_id"], ENTITIES, "prod")
+        assert "customer_id" in msg
+        assert "customers" in msg and "orders" in msg
+
+    def test_reports_every_missing_column(self):
+        msg = missing_columns_message(["segment", "profit"], ENTITIES, "dev")
+        assert "segment" in msg and "profit" in msg
+        assert "2 column(s)" in msg
+
+    def test_handles_a_column_no_entity_declares(self):
+        # Should not crash building the message while reporting a failure.
+        msg = missing_columns_message(["ghost"], ENTITIES, "qa")
+        assert "ghost" in msg and "nothing" in msg
+
+    def test_says_where_to_look(self):
+        msg = missing_columns_message(["segment"], ENTITIES, "prod")
+        assert "superstore_bronze_config" in msg
+
+    def test_carries_the_environment(self):
+        assert "env=prod" in missing_columns_message(["segment"], ENTITIES, "prod")
 
 
 @pytest.mark.unit

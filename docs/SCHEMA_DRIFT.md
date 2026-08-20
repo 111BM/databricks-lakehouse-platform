@@ -44,39 +44,53 @@ What is wrong is that the decision happens *by silence*.
 
 ### The three drift types behave completely differently
 
-| Drift | What happens today | Loud? |
-|---|---|---|
-| Column **added** | see below — **not yet verified** | probably both |
-| Column **removed** | `select()` raises `AnalysisException` | **loud** |
-| Column **retyped** | value rescued, typed column goes NULL | silent |
+| Drift | Handled | Recorded | Proven |
+|---|---|---|---|
+| Column **added** | restarted deliberately, once | `NEW` row | dev + CI |
+| Column **removed** | fails with the columns named | `MISSING` row | unit only |
+| Column **retyped** | rescued; Silver's DQ sees the NULL | `RESCUED` count | not tested |
 
-### The added case is not as simple as it was first written here
+### What an added column actually does — measured, after two wrong guesses
 
-An earlier version of this document, and the commit that introduced the
-detector, both said an added column is *silently* dropped. That is likely wrong
-for the **first** encounter.
+Earlier versions of this document, and two commits, said an added column is
+*silently* dropped. **That was wrong**, and it was wrong because it was derived
+from reading configuration rather than observing behaviour. A second guess — that
+the retry must have *rescued* the column — was also wrong.
 
-`cloudFiles.schemaEvolutionMode = addNewColumns` is documented to **fail the
-stream** with `UnknownFieldException` when an unknown column appears, write the
-updated schema to the schema location, and require a restart. Nothing in
-`bronze_ingest_superstore_module_01` handles that — `grep` for
-`UnknownField|retry|restart` returns nothing.
+Measured 2026-08-17 in dev and again in `integration_test`:
 
-So the real sequence is probably:
+```
+[UNKNOWN_FIELD_EXCEPTION.NEW_FIELDS_IN_FILE]
+Encountered unknown fields during parsing: [Discount Reason],
+which can be fixed by an automatic retry: true
+```
 
-1. run fails — loud, but with an error naming no business cause
-2. someone reruns
-3. the column lands in `superstore_raw`
-4. the entity split drops it — silent from here on
+- Bronze **attempt 0 FAILED**, **attempt 1 SUCCEEDED**
+- `superstore_raw` went 28 → 29 columns, `discount_reason` present
+- **0 rows rescued** — the column was properly added, not rescued
+- `schema_drift` gained a `NEW` row
 
-That does not make the detector less useful; it arguably makes it more so.
-Without it you get one baffling failure, a rerun that goes green, and no record
-anywhere of what changed or that a new column now exists unused.
+And no retry is configured anywhere: **Databricks retries this error class on
+its own**. So the pre-fix behaviour was a red Bronze task that healed silently,
+leaving a run history saying only *"failed, then didn't"*.
 
-**This is stated as uncertain because it has never been observed on this
-platform.** The integration suite now manufactures the event (see below), and
-whatever it does is the answer. If the stream does fail, restart handling is a
-real gap in backlog item 2 and a bigger one than detection.
+**Now handled deliberately.** The orchestrator wraps the ingest in a single
+bounded retry gated on `is_schema_evolution_error`, logging *"Auto Loader
+reported new source column(s) … restarting the stream once"*. Genuine faults — a
+missing file, a permissions error — still fail on the first attempt rather than
+looping.
+
+### A removed column no longer crashes opaquely
+
+`detect_drift` computes `missing` **before** the entity loop, but the failure
+used to surface several steps later from inside the split as
+`AnalysisException: cannot resolve segment`. It now raises at the point of
+detection, naming each column and which entities declared it.
+
+Deliberately raised **outside** the `try/except` that guards the monitor: a
+declared column that stopped arriving is a data condition, not a broken
+instrument, and the handler protecting the pipeline from a failing monitor must
+not swallow it.
 
 The loud one is the safe one — it fails the same day and someone fixes it. The
 quiet ones are the problem, and they are quiet in different ways:
@@ -267,9 +281,18 @@ inside a single run by adding a parallel branch.
 
 **No alerting.** Deliberate, and covered under [When](#when).
 
-**Restart handling for `UnknownFieldException`.** If the suite shows Auto Loader
-fails the stream on an unknown column, that gap is real and unaddressed — and
-probably the larger half of backlog item 2.
+**The removal path is unit-tested only.** `is_schema_evolution_error` and
+`missing_columns_message` are covered, and the orchestrator raises on `missing` —
+but no pipeline run has executed that branch. It cannot be added to the
+integration suite as-is: a seed that removes a declared column would fail the
+run by design, and a suite cannot both cause that and pass. Proving it needs a
+targeted experiment against dev, the same method that settled the added case.
+
+**The retype path is untested.** A rescued value leaves the typed column NULL,
+which Silver's DQ then handles through severity tiers — quarantining if it is a
+business key, repairing and flagging if descriptive. That reasoning has not been
+measured, and reasoning about Auto Loader without measuring has now been wrong
+twice on this page.
 
 What **is** verified: the logic runs against the shipped config and the real
 `prod_bronze.superstore_raw` schema, reports `SCHEMA_STABLE` with one knowingly
