@@ -193,5 +193,14 @@ if table_exists(SNAPSHOT):
 
 # COMMAND ----------
 
-finalize("REPLAY")
-dbutils.notebook.exit("REPLAY_ASSERTIONS_PASSED")
+# The count travels in the exit string because the Jobs API returns only
+# notebook_output for a notebook task — a number printed to a cell is
+# invisible to every automated check, which is how a no-op assertion
+# notebook looked healthy for four runs.
+# 20, not the ~35 a full run produces: quarantine and audit tables only
+# exist for entities the seed dirties, so the real count varies. The guard
+# is against total collapse -- a cell silently demoted to markdown -- not a
+# precise tally, and a threshold that fails valid runs would be worse than
+# none.
+n = finalize("REPLAY", minimum=20)
+dbutils.notebook.exit(f"REPLAY_ASSERTIONS_PASSED checks={n}")

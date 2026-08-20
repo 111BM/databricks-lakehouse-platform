@@ -46,8 +46,18 @@ BUSINESS_KEYS = {
 # ---- Assertion harness ----
 _failures = []
 
+# Every check that actually EXECUTED, not just the ones that failed.
+#
+# assert_schema_drift once ran with all eleven of its checks inside a
+# `# MAGIC %md` cell -- Databricks rendered them as markdown, none executed,
+# _failures stayed empty, and the task exited "OK" having verified nothing.
+# Tracking failures alone cannot distinguish "everything passed" from
+# "nothing ran"; they produce identical output.
+_checks = []
+
 def check(name, condition, detail=""):
     """Record a pass/fail. Never raises here — we report all, then finalize()."""
+    _checks.append(name)
     status = "PASS" if condition else "FAIL"
     line = f"[{status}] {name}"
     if detail:
@@ -81,11 +91,29 @@ def columns(fqn):
     except Exception:
         return set()
 
-def finalize(layer):
-    """Raise if this layer had any failed check — fails the job task."""
+def finalize(layer, minimum=1):
+    """
+    Raise if this layer had any failed check — fails the job task.
+
+    Also raises when FEWER than `minimum` checks executed. A notebook that
+    asserts nothing passes every failure test ever written, so the count is
+    verified rather than assumed.
+
+    Returns the number of checks that ran, so the caller can put it in
+    dbutils.notebook.exit — the Jobs API returns only that string for a
+    notebook task, so a count printed anywhere else is invisible to tooling.
+    """
+    if len(_checks) < minimum:
+        raise AssertionError(
+            f"[{layer}] only {len(_checks)} check(s) executed, expected at least "
+            f"{minimum} — the notebook is not running the assertions it appears "
+            f"to contain (a `# MAGIC %md` heading sharing a cell with code does "
+            f"exactly this)"
+        )
     if _failures:
         raise AssertionError(
-            f"[{layer}] integration checks FAILED ({len(_failures)}):\n  - "
-            + "\n  - ".join(_failures)
+            f"[{layer}] integration checks FAILED ({len(_failures)} of "
+            f"{len(_checks)}):\n  - " + "\n  - ".join(_failures)
         )
-    print(f"\n[{layer}] all integration checks passed ✅")
+    print(f"\n[{layer}] all {len(_checks)} integration checks passed ✅")
+    return len(_checks)
