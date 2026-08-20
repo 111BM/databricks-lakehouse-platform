@@ -151,6 +151,45 @@ it matters most: while iterating on a failure.
 | Drift guard | the `REPLAY` `load_type` check, same file |
 | Unchanged full-DAG legs | `run_pipeline_initial_load`, `run_pipeline_incremental_load` |
 
+## The gap this change exposed
+
+Scoping the replay legs meant asking, task by task, *what asserts on this?* That
+question turned up something the old shape had hidden: **`assert_replay` never
+touched Gold facts.**
+
+It checks `dim_customers` and `dim_products`, plus Bronze/Silver/quarantine/audit
+counts and metrics. Facts were re-derived on every replay, twice per suite, and
+nothing looked at the result — under the full-DAG shape that was invisible among
+eleven other unasserted tasks.
+
+By the criterion used to remove the marts, `replay_N_gold_facts` should have gone
+too. It did not, because the right fix was the opposite:
+
+```python
+merge_fact_into_gold(df, gold_tbl, natural_keys, hash_column, ...)
+```
+
+Facts merge on natural keys, so a replay **should** update in place rather than
+append. That word is doing a lot of work. The backfill defect was a mechanism
+assumed idempotent that appended 505 duplicate Bronze rows while every downstream
+count stayed plausible — and Bronze at least had Silver's dedup absorbing the
+damage. **Facts have no such absorber:** a duplicate fact row lands directly in
+the marts.
+
+`assert_gold_fact` does check grain uniqueness, but only after the initial load,
+never after a replay. So the suite verified the property in the one mode where
+duplication was least likely.
+
+Two checks now close it, using the snapshot the replay legs already write:
+
+| Check | Catches |
+|---|---|
+| `facts_N` row count unchanged between replay 1 and 2 | a merge that appends instead of updating |
+| grain still unique after replay | duplication by any route |
+
+Every task in the replay legs is now asserted on, which was not true before this
+change *or* after the first version of it.
+
 ## What is not done
 
 **The remaining two `run_job_task` invocations are ~19.5 minutes** and are staying

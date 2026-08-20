@@ -120,6 +120,35 @@ if check(f"{SNAPSHOT} exists", table_exists(SNAPSHOT)):
                   d.count() == b["quarantine_rows"],
                   f"after first={b['quarantine_rows']}, after second={d.count()}")
 
+        # Facts. Previously unchecked after a replay, while the replay legs ran
+        # the Gold facts orchestrator anyway -- so the suite was paying to
+        # produce output nothing looked at.
+        #
+        # merge_fact_into_gold merges on natural keys, so a replay SHOULD update
+        # in place. That word is doing a lot of work: the backfill defect was a
+        # mechanism assumed idempotent that appended 505 duplicate Bronze rows,
+        # and every downstream count stayed plausible because Silver's dedup
+        # absorbed them. Facts have no such absorber -- a duplicate here lands
+        # directly in the marts.
+        #
+        # assert_gold_fact checks grain uniqueness, but only after the initial
+        # load. These two checks are the same property after a replay.
+        for fact, grain in (("facts_orders", ["order_id"]),
+                            ("facts_sales", ["order_id", "product_id"])):
+            b = first[fact]
+            f = spark.table(f"{GOLD}.{fact}")
+            total = f.count()
+            distinct = f.select(*grain).distinct().count()
+
+            check(f"second replay left {fact} row count unchanged",
+                  total == b["silver_rows"],
+                  f"after first={b['silver_rows']}, after second={total} "
+                  f"— a merge on {grain} should update in place, not append")
+            check(f"{fact} grain {grain} still unique after replay",
+                  total == distinct,
+                  f"rows={total}, distinct grain={distinct} — the replay "
+                  f"duplicated fact rows")
+
 # COMMAND ----------
 
 # DBTITLE 1,Reconciliation holds — the only invariant that spans the mode change

@@ -88,6 +88,21 @@ for dim in ("dim_customers", "dim_products"):
     total = spark.table(f"{GOLD}.{dim}").count()
     rows.append((dim, 0, current, total, 0))
 
+# Facts, recorded for the same reason dimensions are: a replay re-derives them,
+# and nothing was checking whether that is idempotent.
+#
+# merge_fact_into_gold merges on natural keys, so re-deriving identical rows
+# SHOULD update in place rather than append -- but "should" is exactly the word
+# that preceded the backfill defect, where a mechanism assumed idempotent
+# duplicated 505 Bronze rows and every downstream count stayed plausible.
+#
+# Stored as (total_rows, distinct_grain) in the silver_rows / quarantine_rows
+# columns, following the same positional convention the dimensions above use.
+# Duplication shows up as either number moving, or as the two diverging.
+for fact, grain in (("facts_orders", ["order_id"]), ("facts_sales", ["order_id", "product_id"])):
+    f = spark.table(f"{GOLD}.{fact}")
+    rows.append((fact, 0, f.count(), f.select(*grain).distinct().count(), 0))
+
 snapshot_df = spark.createDataFrame(
     [(PHASE,) + r for r in rows],
     ["phase", "entity", "bronze_rows", "silver_rows", "quarantine_rows", "audit_rows"],
