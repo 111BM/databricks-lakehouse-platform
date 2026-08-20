@@ -137,6 +137,13 @@ resources:
           notebook_task:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/assert_schema_drift
             source: WORKSPACE
+            base_parameters:
+              # REQUIRED. Table names come from assertion_helpers (ENV is hardcoded
+              # to integration_test there), not from superstore_platform_config --
+              # whose get_env() reads SUPERSTORE_ENV and DEFAULTS TO DEV. Without
+              # this widget the notebook asserted against dev for several runs
+              # while reporting confidently about "the suite".
+              helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
           environment_key: integration_test_environment
 
         # 6. Replay leg. The suite ran `incremental` only, so every windowed-mode

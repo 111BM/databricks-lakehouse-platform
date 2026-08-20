@@ -35,21 +35,31 @@
 
 # COMMAND ----------
 
-import os
 import sys
 
-NOTEBOOK_DIR = os.path.dirname(
-    dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
-)
-BUNDLE_ROOT = "/Workspace" + os.path.dirname(os.path.dirname(NOTEBOOK_DIR))
-sys.path.append(f"{BUNDLE_ROOT}/src/superstore_shared_utilities")
+# Table names come from assertion_helpers, which hardcodes ENV="integration_test",
+# NOT from superstore_platform_config.
+#
+# The first version of this notebook used get_metrics_schema(), and that reads
+# os.getenv("SUPERSTORE_ENV", "dev") -- the env var is set for pipeline tasks but
+# NOT for this assertion task, so it silently resolved to dev_metrics and
+# dev_bronze. Every run of this notebook was asserting against DEV.
+#
+# It went unnoticed because dev happened to contain plausible values: a run
+# reported SCHEMA_DRIFT_ASSERTIONS_OK with rows=3 and was presented as proof the
+# detector fires in CI, when it was reading a dev table populated by a manual
+# dev experiment. The "unexplained qa discrepancy" chased for hours was the same
+# thing -- dev's row count at different moments.
+#
+# A wrong-but-plausible table is worse than a missing one: a missing table fails
+# loudly, a wrong one passes.
+sys.path.append(dbutils.widgets.get("helpers_path"))
+from assertion_helpers import BRONZE, ENV, METRICS
 
-from superstore_platform_config import get_bronze_schema, get_metrics_schema, table
+DRIFT_TABLE = f"{METRICS}.schema_drift"
+RAW_TABLE = f"{BRONZE}.superstore_raw"
 
-DRIFT_TABLE = table(get_metrics_schema(), "schema_drift")
-RAW_TABLE = table(get_bronze_schema(), "superstore_raw")
-
-print(f"drift table: {DRIFT_TABLE}")
+print(f"env={ENV} drift table={DRIFT_TABLE} raw table={RAW_TABLE}")
 
 failures = []
 checks_run = []
@@ -61,7 +71,7 @@ checks_run = []
 #
 # A green run proving nothing is the exact failure this suite exists to catch,
 # so the count is asserted rather than trusted.
-EXPECTED_CHECKS = 11
+EXPECTED_CHECKS = 13
 
 
 def check(condition, message):
@@ -73,6 +83,31 @@ def check(condition, message):
         print(f"FAIL  {message}")
         failures.append(message)
 
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 0. The test is pointed at the right environment
+# MAGIC
+# MAGIC Checked first, and checked at all, because this notebook spent several
+# MAGIC runs asserting against `dev` — passing, failing, and producing a
+# MAGIC discrepancy that took hours to chase. Every one of those outcomes was
+# MAGIC about dev's data.
+# MAGIC
+# MAGIC A test reading the wrong table does not fail; it reports confidently
+# MAGIC about something nobody asked. That is worse than a missing table, which
+# MAGIC at least fails loudly.
+
+# COMMAND ----------
+
+check(
+    "integration_test" in DRIFT_TABLE,
+    f"drift table belongs to integration_test, not another env ({DRIFT_TABLE})",
+)
+check(
+    "integration_test" in RAW_TABLE,
+    f"raw table belongs to integration_test, not another env ({RAW_TABLE})",
+)
 
 # COMMAND ----------
 
@@ -164,7 +199,7 @@ check(
 )
 
 for entity in ("customers", "products", "orders", "sales"):
-    entity_columns = set(spark.table(table(get_bronze_schema(), entity)).columns)
+    entity_columns = set(spark.table(f"{BRONZE}.{entity}").columns)
     check(
         "discount_reason" not in entity_columns,
         f"discount_reason NOT in {entity} — the allowlist still governs the split",
