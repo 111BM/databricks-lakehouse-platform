@@ -123,6 +123,16 @@ for r in rows:
 
 # MAGIC %md
 # MAGIC ## 1. Heartbeat — the detector ran on every load
+# MAGIC
+# MAGIC The heartbeat is **per Bronze execution, not per pipeline run**, and the
+# MAGIC two are not the same number. When a new column arrives Auto Loader fails
+# MAGIC the stream, Databricks retries the task on its own, and Bronze executes
+# MAGIC twice inside one `master_run_id` — writing two heartbeats. That is an
+# MAGIC accurate record, not a duplicate.
+# MAGIC
+# MAGIC An earlier version asserted `runs == rows` and failed on correct
+# MAGIC behaviour, which is the same mistake `assert_replay` already made once by
+# MAGIC asserting `audit unchanged` across a batch-boundary change.
 
 # COMMAND ----------
 
@@ -134,8 +144,9 @@ check(
     f"RESCUED heartbeat written for at least the two loads (found {len(rescued)})",
 )
 check(
-    len(distinct_runs) == len(rescued),
-    f"one heartbeat per run, not several (runs={len(distinct_runs)}, rows={len(rescued)})",
+    len(rescued) >= len(distinct_runs),
+    f"every run that wrote a heartbeat is represented "
+    f"(runs={len(distinct_runs)}, rows={len(rescued)})",
 )
 check(
     all(r["row_count"] == 0 for r in rescued),

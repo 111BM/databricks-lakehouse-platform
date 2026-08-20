@@ -74,11 +74,31 @@ And no retry is configured anywhere: **Databricks retries this error class on
 its own**. So the pre-fix behaviour was a red Bronze task that healed silently,
 leaving a run history saying only *"failed, then didn't"*.
 
-**Now handled deliberately.** The orchestrator wraps the ingest in a single
-bounded retry gated on `is_schema_evolution_error`, logging *"Auto Loader
-reported new source column(s) … restarting the stream once"*. Genuine faults — a
-missing file, a permissions error — still fail on the first attempt rather than
-looping.
+**An in-pipeline restart was attempted and does not work.** The orchestrator
+wraps the ingest in a bounded retry gated on `is_schema_evolution_error`, but it
+has never fired, because the exception reaching Python carries only Databricks'
+generic wrapper:
+
+```
+error       : Some streams terminated before this command could finish!
+error_trace : org.apache.spark.sql.catalyst.util.UnknownFieldException
+              [UNKNOWN_FIELD_EXCEPTION.NEW_FIELDS_IN_FILE] ...
+```
+
+The marker lives in Databricks' captured **Java** trace, not in anything
+`traceback.format_exc()` can see — the stream fails asynchronously and the
+command is terminated from outside. Two attempts to match it failed, the second
+after widening from `str(e)` to the full Python traceback.
+
+The code is left in place: it is harmless, correctly gated, and would work if
+the marker ever reaches Python. But **the platform's own automatic retry is what
+actually recovers this run**, and pursuing a cosmetic improvement to run history
+past that point is not worth fighting async stream handling for.
+
+So the honest description of the current behaviour is: a new column costs one
+failed Bronze attempt, Databricks retries it unprompted, the retry succeeds and
+adds the column, and `schema_drift` records the event. The failure is visible in
+run history; the *reason* for it is visible in the drift table.
 
 ### A removed column no longer crashes opaquely
 
