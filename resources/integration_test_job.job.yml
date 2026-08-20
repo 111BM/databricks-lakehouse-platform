@@ -171,21 +171,111 @@ resources:
               phase: "incremental"
           environment_key: integration_test_environment
 
-        - task_key: run_pipeline_replay_1
+        # ------------------------------------------------------------------
+        # Replay legs: the three layers replay touches, not the whole DAG.
+        # ------------------------------------------------------------------
+        # Previously each replay was a run_job_task invoking the full 18-task
+        # pipeline. Measured on a green suite: 4 pipeline invocations, 88 task
+        # startups, 41.9 of 56.2 minutes -- to process a NINE ROW seed. Almost
+        # none of that is computation; it is serverless task startup, which the
+        # performance section already measures at ~60% of runtime on real data
+        # and which approaches 100% at this size.
+        #
+        # A replay re-derives Silver and Gold from Bronze already held. Bronze
+        # exits immediately (reads_from_source is false for replay), and
+        # assert_replay inspects BRONZE, SILVER, GOLD, QUARANTINE, AUDIT and
+        # METRICS -- never marts, features or KPI views. Those eleven tasks ran
+        # on every replay and nothing asserted on them.
+        #
+        # WHAT THIS GIVES UP, stated plainly: these legs are a hand-maintained
+        # subset of the pipeline's internal wiring rather than the pipeline
+        # itself. Add a layer that replay should cover and this will not run it.
+        # The initial and incremental loads above are deliberately left as full
+        # run_job_task invocations for exactly that reason -- they are what
+        # proves the real invocation path works. The replays re-run the same
+        # code on the same data with a different run_mode; fidelity is already
+        # established by the time they start.
+        #
+        # The drift guard is assert_replay itself: it requires a REPLAY
+        # load_type row in BOTH silver_layer_metrics and gold_layer_metrics, so
+        # dropping a layer from these legs fails the suite rather than quietly
+        # narrowing what is tested.
+        #
+        # Both legs share one master_run_id, because the layer orchestrators
+        # read task values from a HARDCODED taskKey
+        # (superstore_pipeline_master_run_id_init) and a job may only contain
+        # one task with that key. In production each replay would be a separate
+        # job run with its own id. The assertions are count-based on table
+        # contents, so this does not affect them -- recorded because it is a
+        # real divergence from production, not because it bites.
+        - task_key: superstore_pipeline_master_run_id_init
           depends_on:
             - task_key: snapshot_before_replay
-          run_job_task:
-            job_id: ${resources.jobs.superstore_data_platform.id}
-            job_parameters:
+          notebook_task:
+            notebook_path: ${workspace.file_path}/src/superstore_shared_utilities/superstore_pipeline_master_run_id_init
+            source: WORKSPACE
+            base_parameters:
               SUPERSTORE_ENV: "integration_test"
+              SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
+              SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
+          environment_key: integration_test_environment
+
+        - task_key: replay_1_silver
+          depends_on:
+            - task_key: superstore_pipeline_master_run_id_init
+          notebook_task:
+            notebook_path: ${workspace.file_path}/superstore_orchestrator/layer_orchestrator/superstore_silver_layer_ETL_pipeline_orchestrator
+            base_parameters:
+              SUPERSTORE_ENV: "integration_test"
+              SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
+              SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
+              master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_run_id}}"
               run_mode: "replay"
               start_date: "{{tasks.snapshot_before_replay.values.replay_start}}"
               end_date: "{{tasks.snapshot_before_replay.values.replay_end}}"
               dry_run: "false"
+            source: WORKSPACE
+          environment_key: integration_test_environment
+
+        - task_key: replay_1_gold_dims
+          depends_on:
+            - task_key: replay_1_silver
+          notebook_task:
+            notebook_path: ${workspace.file_path}/superstore_orchestrator/layer_orchestrator/superstore_gold_dimensional_ETL_pipeline_orchestrator
+            base_parameters:
+              SUPERSTORE_ENV: "integration_test"
+              SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
+              SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
+              master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_run_id}}"
+              run_mode: "replay"
+              start_date: "{{tasks.snapshot_before_replay.values.replay_start}}"
+              end_date: "{{tasks.snapshot_before_replay.values.replay_end}}"
+              dry_run: "false"
+            source: WORKSPACE
+          environment_key: integration_test_environment
+
+        - task_key: replay_1_gold_facts
+          depends_on:
+            - task_key: replay_1_silver
+          notebook_task:
+            notebook_path: ${workspace.file_path}/superstore_orchestrator/layer_orchestrator/superstore_gold_facts_ETL_pipeline_orchestrator
+            base_parameters:
+              SUPERSTORE_ENV: "integration_test"
+              SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
+              SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
+              master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_run_id}}"
+              run_mode: "replay"
+              start_date: "{{tasks.snapshot_before_replay.values.replay_start}}"
+              end_date: "{{tasks.snapshot_before_replay.values.replay_end}}"
+              dry_run: "false"
+            source: WORKSPACE
+          environment_key: integration_test_environment
+
 
         - task_key: snapshot_after_replay_1
           depends_on:
-            - task_key: run_pipeline_replay_1
+            - task_key: replay_1_gold_dims
+            - task_key: replay_1_gold_facts
           notebook_task:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/03_snapshot_before_replay
             source: WORKSPACE
@@ -194,21 +284,63 @@ resources:
               phase: "replay_1"
           environment_key: integration_test_environment
 
-        - task_key: run_pipeline_replay_2
+        - task_key: replay_2_silver
           depends_on:
             - task_key: snapshot_after_replay_1
-          run_job_task:
-            job_id: ${resources.jobs.superstore_data_platform.id}
-            job_parameters:
+            - task_key: superstore_pipeline_master_run_id_init
+          notebook_task:
+            notebook_path: ${workspace.file_path}/superstore_orchestrator/layer_orchestrator/superstore_silver_layer_ETL_pipeline_orchestrator
+            base_parameters:
               SUPERSTORE_ENV: "integration_test"
+              SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
+              SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
+              master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_run_id}}"
               run_mode: "replay"
               start_date: "{{tasks.snapshot_before_replay.values.replay_start}}"
               end_date: "{{tasks.snapshot_before_replay.values.replay_end}}"
               dry_run: "false"
+            source: WORKSPACE
+          environment_key: integration_test_environment
+
+        - task_key: replay_2_gold_dims
+          depends_on:
+            - task_key: replay_2_silver
+          notebook_task:
+            notebook_path: ${workspace.file_path}/superstore_orchestrator/layer_orchestrator/superstore_gold_dimensional_ETL_pipeline_orchestrator
+            base_parameters:
+              SUPERSTORE_ENV: "integration_test"
+              SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
+              SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
+              master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_run_id}}"
+              run_mode: "replay"
+              start_date: "{{tasks.snapshot_before_replay.values.replay_start}}"
+              end_date: "{{tasks.snapshot_before_replay.values.replay_end}}"
+              dry_run: "false"
+            source: WORKSPACE
+          environment_key: integration_test_environment
+
+        - task_key: replay_2_gold_facts
+          depends_on:
+            - task_key: replay_2_silver
+          notebook_task:
+            notebook_path: ${workspace.file_path}/superstore_orchestrator/layer_orchestrator/superstore_gold_facts_ETL_pipeline_orchestrator
+            base_parameters:
+              SUPERSTORE_ENV: "integration_test"
+              SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
+              SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
+              master_run_id: "{{tasks.superstore_pipeline_master_run_id_init.values.master_run_id}}"
+              run_mode: "replay"
+              start_date: "{{tasks.snapshot_before_replay.values.replay_start}}"
+              end_date: "{{tasks.snapshot_before_replay.values.replay_end}}"
+              dry_run: "false"
+            source: WORKSPACE
+          environment_key: integration_test_environment
+
 
         - task_key: assert_replay
           depends_on:
-            - task_key: run_pipeline_replay_2
+            - task_key: replay_2_gold_dims
+            - task_key: replay_2_gold_facts
           notebook_task:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/assert_replay
             source: WORKSPACE
