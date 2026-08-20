@@ -46,9 +46,35 @@ What is wrong is that the decision happens *by silence*.
 
 | Drift | Handled | Recorded | Proven |
 |---|---|---|---|
-| Column **added** | restarted deliberately, once | `NEW` row | dev + CI |
-| Column **removed** | fails with the columns named | `MISSING` row | unit only |
-| Column **retyped** | rescued; Silver's DQ sees the NULL | `RESCUED` count | not tested |
+| Column **added** | one failed attempt, platform retries, column added | `NEW` row | dev + CI |
+| Column **removed** | raises, naming the columns and their entities | `MISSING` row | dev |
+| Column **retyped** | quarantined by Silver's regex rules | n/a — see below | CI, every run |
+
+### A retyped column is not schema drift here
+
+Worth stating because it was mis-framed as a gap for some time.
+
+**Type drift cannot occur at Bronze in this pipeline.** Every source column is
+read as `STRING` — Auto Loader runs without `cloudFiles.inferColumnTypes`, so
+`sales`, `quantity`, `discount` and the date columns all land as strings.
+Nothing can fail to parse into a string, so `col__rescued_data` captures
+*unknown fields*, never type mismatches.
+
+Type validation happens in **Silver**, and it is already covered:
+
+```
+seed row 9      Sales = "not-a-number", on a valid business key
+silver config   sales: '^\d+(\.\d+)?$'
+assert_silver   "quarantine caught the non-numeric Sales value on a valid key"
+```
+
+That assertion runs on every CI execution. So a retyped value is quarantined
+with a named rule violation, by the DQ machinery that already exists — the
+correct place for it, since it is a *value* problem rather than a *shape*
+problem.
+
+This is why no retype handling was added to the drift detector: there was
+nothing to add.
 
 ### What an added column actually does — measured, after two wrong guesses
 
@@ -301,18 +327,16 @@ inside a single run by adding a parallel branch.
 
 **No alerting.** Deliberate, and covered under [When](#when).
 
-**The removal path is unit-tested only.** `is_schema_evolution_error` and
-`missing_columns_message` are covered, and the orchestrator raises on `missing` —
-but no pipeline run has executed that branch. It cannot be added to the
-integration suite as-is: a seed that removes a declared column would fail the
-run by design, and a suite cannot both cause that and pass. Proving it needs a
-targeted experiment against dev, the same method that settled the added case.
+**The removal path is verified in dev, not in CI.** A targeted experiment on
+2026-08-20 declared a column that does not exist and confirmed the run fails
+with `SCHEMA_DRIFT_FATAL … ghost_column_drift_test (declared by: customers)`.
+It cannot be added to the integration suite as-is: a seed that removes a
+declared column fails the run by design, and a suite cannot both cause that and
+pass.
 
-**The retype path is untested.** A rescued value leaves the typed column NULL,
-which Silver's DQ then handles through severity tiers — quarantining if it is a
-business key, repairing and flagging if descriptive. That reasoning has not been
-measured, and reasoning about Auto Loader without measuring has now been wrong
-twice on this page.
+**The in-pipeline restart does not work and was abandoned.** See above — the
+marker never reaches Python. Databricks' own retry recovers the run, so the
+behaviour is correct; only the run history is untidy.
 
 What **is** verified: the logic runs against the shipped config and the real
 `prod_bronze.superstore_raw` schema, reports `SCHEMA_STABLE` with one knowingly
