@@ -190,39 +190,75 @@ Two checks now close it, using the snapshot the replay legs already write:
 Every task in the replay legs is now asserted on, which was not true before this
 change *or* after the first version of it.
 
-## A failed run now keeps its evidence
+## Every run now keeps its evidence
 
-Separate from granularity, but found the same way and worth fixing together.
+Separate from granularity, but found the same way and fixed alongside it.
 
-`cleanup` ran with `run_if: ALL_DONE` — **including after a failed assertion.**
-The schemas were dropped seconds after the failure, so a red run could only ever
-be diagnosed from whatever happened to be in its exit string. Anything not
-anticipated in that string was unrecoverable.
+`cleanup` ran with `run_if: ALL_DONE`, dropping the `integration_test_*` schemas
+at the end of every run — **including after a failed assertion**. A red run could
+then only be diagnosed from whatever happened to be in its exit string, and
+anything not anticipated there was unrecoverable.
 
-That is not theoretical. On 2026-08-20 the schema-drift discrepancy could not be
-measured, because `integration_test_metrics` no longer existed by the time anyone
-looked. Hours went into reasoning about Auto Loader from configuration instead —
-and that reasoning was wrong twice.
+The first attempt at this fix made cleanup success-only. **That was a
+half-measure**, and the reason is the important part:
 
-**The fix moves the guarantee, not the property.**
+> Both investigations that stalled on 2026-08-20 were **green** runs.
+
+- `assert_schema_drift` reported `SCHEMA_DRIFT_ASSERTIONS_OK rows=3` while
+  silently reading **dev**. One query against a surviving
+  `integration_test_metrics.schema_drift` would have shown it empty and exposed
+  the bug immediately. It took two more suite cycles instead.
+- A schema-drift discrepancy could not be measured at all, so it was reasoned
+  about from Auto Loader configuration — wrongly, twice.
+
+A cleanup that runs only on failure would not have helped either. **A passing
+test destroying its own evidence is precisely the case where you most need it**,
+because a green run that is quietly wrong gives you no other signal to pull on.
+
+### The resolution
+
+There is **no end-of-run cleanup**. `reset_environment` (task 0) is the only
+place isolation is enforced.
 
 | | Before | After |
 |---|---|---|
-| Clean start | end-of-run cleanup | `reset_environment` task, first |
-| Green run | leaves nothing | leaves nothing |
-| **Red run** | **evidence destroyed** | **tables preserved for post-mortem** |
+| Clean start | end-of-run cleanup | `reset_environment`, first task |
+| Red run evidence | destroyed | **preserved** |
+| Green run evidence | destroyed | **preserved** |
+| Isolation guarantee | end of run | start of run |
 
-`reset_environment` reuses `04_cleanup_integration` — the same notebook the
-end-of-run cleanup calls — so the two can never drift apart. Whatever cleanup
-drops, reset drops.
+Isolation is unchanged — every run still begins from nothing. Only the *timing*
+of the guarantee moved, and start-of-run is the only ordering where a completed
+run can leave something behind.
 
-`cleanup` loses `run_if: ALL_DONE` and falls back to the `ALL_SUCCESS` default.
-Isolation is unchanged; it is now enforced at the start rather than the end,
-which is the only ordering where a failure can leave something behind.
+### What persists, and why that is acceptable
 
-The exit-string diagnostics added elsewhere in this suite were a workaround for
-this policy. They are still worth having — the Jobs API returns only
-`notebook_output` — but they no longer have to carry the whole investigation.
+Roughly 25–30 tables across nine schemas, from a **nine row** seed. It does not
+accumulate: `reset_environment` drops and recreates them on every run, so this is
+one run's state held constant rather than growth. Nine rows is not a storage
+argument.
+
+The considered alternative was keeping cleanup but preserving only
+`integration_test_metrics` — three tables, most of the diagnostic value, almost
+no clutter. It was rejected because the 2026-08-20 investigation needed
+**both** `schema_drift` *and* `integration_test_bronze.superstore_raw`, to check
+whether `discount_reason` had actually landed. Metrics-only answers one of those
+questions.
+
+`reset_environment` reuses `04_cleanup_integration` rather than duplicating its
+schema list. That list was wrong once already — it omitted `features` and
+`semantic_layer`, and those schemas survived every run unnoticed until
+`98337a2`. It now matters in exactly one place instead of two.
+
+### This does not replace the guards
+
+Preserved tables let you *investigate* a bad run. They do not *prevent* one.
+
+The primary defence against a test that passes while testing the wrong thing is
+still the guards added alongside this: `finalize()` asserting how many checks
+actually executed, and `assert_schema_drift` asserting its resolved table names
+contain `integration_test`. Those catch the bug class. The tables are what you
+reach for when something slips past them anyway.
 
 ## What is not done
 

@@ -4,7 +4,7 @@ An end-to-end **lakehouse data platform** on Databricks Serverless: Medallion Ar
 
 **What makes this project different from most portfolio pipelines:**
 
-- **Tested like production software** — 277 unit tests against extracted pure functions, plus an end-to-end integration test that seeds dirty data, runs the *real* 18-task pipeline in an isolated environment, asserts every layer, verifies SCD2 change detection across two loads, replays the window twice to prove re-derivation is idempotent, and always cleans up.
+- **Tested like production software** — 277 unit tests against extracted pure functions, plus an end-to-end integration test that seeds dirty data, runs the *real* 18-task pipeline in an isolated environment, asserts every layer, verifies SCD2 change detection across two loads, replays the window twice to prove re-derivation is idempotent, and resets its environment at the START rather than the end — so a run's tables survive for post-mortem whether it passed or failed.
 - **Git is the single source of truth** — every notebook, module, and YAML config is deployed by the bundle (`${workspace.file_path}` paths + runtime-derived `BUNDLE_ROOT`); nothing is hand-synced to the workspace.
 - **Data quality as routing, not filtering** — invalid rows are quarantined with named rule violations (`error_columns`), descriptive violations are repaired and flagged rather than discarding the row ([docs/SEVERITY_TIERS.md](docs/SEVERITY_TIERS.md)), duplicates are audited, and a reconciliation invariant accounts for every row: `bronze == silver + quarantine + audit + superseded`, where the fourth term is derived from Bronze rather than stored ([docs/RECONCILIATION_INVARIANT.md](docs/RECONCILIATION_INVARIANT.md)). The three-term form holds only after a full re-derivation — under incremental loading a MERGE that updates a row in place leaves the superseded version in no bucket.
 
@@ -156,14 +156,17 @@ seed dirty data → run REAL pipeline (SUPERSTORE_ENV=integration_test)
   → assert_gold_fact (grain uniqueness, referential integrity)
 → seed changed data → run pipeline AGAIN
   → assert_scd2_change (change historized, unchanged rows NOT churned — idempotency)
-→ cleanup (always runs, even on failure)
+(no end-of-run cleanup — the environment is reset at the START, so a
+ failed OR passing run leaves its tables available for post-mortem)
 ```
 
 Everything runs against isolated `integration_test_*` schemas and a dedicated volume — dev/qa/prod data is never touched. A failed assertion fails the job, which fails CI.
 
 ![Integration test job DAG on Databricks Serverless](docs/images/integration_tests_DAG.png)
 
-*The `superstore_integration_test` job: the real pipeline run twice (initial load, then an SCD2 change), asserting every layer in between and always cleaning up — end to end in ~22 min on serverless.*
+*The `superstore_integration_test` job: the real pipeline run twice (initial load, then an SCD2 change), asserting every layer in between.*
+
+*The screenshot predates two changes and is left rather than retaken, since the DAG shape it shows is still the point. It depicts the **old** replay legs — two further full-pipeline invocations, since removed — and a trailing `cleanup` task that no longer exists; the environment is now reset at the start instead. Measured timings: **56.2 min** before scoping the replay legs, **36.6 min** after.*
 
 ```bash
 databricks bundle run superstore_integration_test --target qa
@@ -197,7 +200,7 @@ Workflows: [.github/workflows/deploy.yml](.github/workflows/deploy.yml), [unit-t
 databricks.yml                     # bundle: targets (dev/qa/prod), variables
 resources/
   superstore_lakehouse_job.job.yml # 18-task pipeline DAG + parameters + notifications
-  integration_test_job.job.yml     # seed → pipeline → asserts → cleanup
+  integration_test_job.job.yml     # reset → seed → pipeline → asserts
 configs/                           # YAML: column contracts, DQ rules, env paths
 src/
   superstore_bronze/               # ingestion + entity split modules
@@ -212,7 +215,7 @@ terraform/
   governance/                      # Unity Catalog permission model (separate lifecycle)
 tests/
   unit/                            # pytest suite (local Spark), by layer
-  integration_databricks/          # seed / per-layer asserts / cleanup notebooks
+  integration_databricks/          # reset / seed / per-layer assert notebooks
 .github/workflows/                 # CI/CD
 ```
 

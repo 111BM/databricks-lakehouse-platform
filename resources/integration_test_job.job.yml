@@ -25,20 +25,18 @@ resources:
       tasks:
         # 0. Reset the isolated environment BEFORE seeding.
         #
-        # Reuses 04_cleanup_integration, so reset and cleanup can never drift
-        # apart: whatever the end-of-run cleanup drops, this drops too.
+        # This is now the ONLY place isolation is enforced -- there is no
+        # end-of-run cleanup. See task 7 below for why.
         #
-        # This exists so the end-of-run cleanup no longer has to run after a
-        # FAILURE. Isolation used to be guaranteed by always cleaning up, which
-        # also destroyed the evidence: schemas were dropped seconds after an
-        # assertion failed, so every red run could only be diagnosed from
-        # whatever happened to be in its exit string. That cost most of a day on
-        # 2026-08-20 -- the schema-drift discrepancy could not be measured
-        # because integration_test_metrics no longer existed by the time anyone
-        # looked.
+        # Isolation used to be guaranteed by cleaning up at the END, which also
+        # destroyed the evidence of whatever had just happened. Enforcing it at
+        # the START gives exactly the same property -- every run begins from
+        # nothing -- while leaving the previous run's tables available to query.
         #
-        # Guaranteeing the clean start HERE gives the same isolation and leaves
-        # a failed run's tables intact for a post-mortem.
+        # It reuses 04_cleanup_integration rather than duplicating its schema
+        # list. That list was wrong once already: it omitted features and
+        # semantic_layer, and those schemas survived every run unnoticed until
+        # 98337a2.
         - task_key: reset_environment
           notebook_task:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/04_cleanup_integration
@@ -377,37 +375,41 @@ resources:
               helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
           environment_key: integration_test_environment
 
-        # 7. Clean up ON SUCCESS ONLY.
+        # 7. There is deliberately NO end-of-run cleanup.
         #
-        # `run_if: ALL_DONE` used to run this even after a failed assertion,
-        # which dropped the schemas seconds after the failure and left nothing to
-        # investigate. Every red run then had to be diagnosed from its exit
-        # string alone, and anything not anticipated in that string was
-        # unrecoverable -- which is why the schema-drift discrepancy on
-        # 2026-08-20 took hours and ended in reasoning rather than measurement.
+        # reset_environment (task 0) already guarantees a clean start, so a
+        # cleanup task here would be functionally redundant -- its only remaining
+        # purpose would be tidiness, and its side effect is destroying the
+        # evidence of whatever just happened.
         #
-        # Without run_if, this defaults to ALL_SUCCESS: a green run still leaves
-        # nothing behind, and a red run preserves its tables until the next run's
-        # reset_environment task drops them. Isolation is unchanged; it is now
-        # enforced at the start instead of the end.
+        # That side effect is not hypothetical. On 2026-08-20 two separate
+        # investigations stalled because the schemas were gone:
         #
-        # Depends on assert_schema_drift as well as assert_replay. That task is a
-        # LEAF hanging off the incremental load, so without this edge cleanup can
-        # start dropping integration_test_* while it is still reading them — the
-        # same race that max_concurrent_runs closes between runs, reintroduced
-        # inside a single run by adding a parallel branch.
-        - task_key: cleanup
-          depends_on:
-            - task_key: assert_replay
-            - task_key: assert_schema_drift
-          notebook_task:
-            notebook_path: ${workspace.file_path}/tests/integration_databricks/04_cleanup_integration
-            source: WORKSPACE
-          environment_key: integration_test_environment
+        #   - assert_schema_drift reported SCHEMA_DRIFT_ASSERTIONS_OK rows=3
+        #     while silently reading DEV. One query against a surviving
+        #     integration_test_metrics.schema_drift would have shown it empty and
+        #     exposed the bug immediately. It took two more suite cycles instead.
+        #   - a schema-drift discrepancy could not be measured at all, so it was
+        #     reasoned about from Auto Loader configuration -- wrongly, twice.
+        #
+        # Both were GREEN runs. A cleanup that ran only on failure would not have
+        # helped either of them, which is why "clean up on success" was rejected
+        # as a half-measure.
+        #
+        # What persists: roughly 25-30 tables across nine schemas, from a NINE
+        # ROW seed. It does not accumulate -- reset_environment drops and
+        # recreates them every run, so this is one run's state held constant, not
+        # growth. Nine rows is not a storage argument, and the schemas are
+        # self-describing enough not to be mistaken for real data.
+        #
+        # One smaller benefit: the cleanup notebook's schema list was wrong once
+        # already -- it omitted features and semantic_layer, and those two
+        # schemas survived every run unnoticed until 98337a2. That list now
+        # matters in exactly one place (task 0) instead of two.
 
       # The integration_test_* schemas and raw volume are GLOBAL, not per-run, so
       # two simultaneous runs corrupt each other: one seeds while the other's
-      # cleanup drops the schemas underneath it. Observed when a manual run
+      # reset_environment drops the schemas underneath it. Observed when a manual run
       # overlapped one already in flight — bronze read 16 rows for a 9-row seed,
       # and every downstream assertion failed for that reason alone.
       # queue + max_concurrent_runs: 1 makes the second run wait instead.

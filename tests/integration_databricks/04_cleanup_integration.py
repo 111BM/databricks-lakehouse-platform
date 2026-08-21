@@ -1,10 +1,18 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Integration Test — Step 4: Cleanup
+# MAGIC # Integration Test — environment reset
 # MAGIC
 # MAGIC Drops the isolated `integration_test_*` schemas and removes the test
-# MAGIC volume so each run starts clean and nothing lingers. Runs even if the
-# MAGIC assertions failed (configured with `run_if: ALL_DONE` in the job).
+# MAGIC volume so each run starts clean.
+# MAGIC
+# MAGIC Wired as `reset_environment`, the FIRST task in the suite — not the
+# MAGIC last. There is no end-of-run cleanup: enforcing isolation at the start
+# MAGIC gives the same guarantee while leaving the previous run's tables
+# MAGIC available to query. A suite that deletes its own evidence can only be
+# MAGIC debugged from whatever was anticipated in an exit string.
+# MAGIC
+# MAGIC The filename keeps its `04_` prefix so the git history stays traceable;
+# MAGIC the number no longer reflects its position in the DAG.
 
 # COMMAND ----------
 
