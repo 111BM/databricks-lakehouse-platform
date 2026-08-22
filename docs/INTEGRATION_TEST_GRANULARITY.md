@@ -12,6 +12,7 @@ fewer of them.
 | `run_job_task` invocations | 4 | **2** |
 | Task startups per suite | 88 | **57** |
 | Suite tasks | 16 | 21 |
+| Wall time | 56.2 min | **~40 min** (3 runs: 36.6 / 40.1 / 41.8) |
 
 The initial and incremental loads are **deliberately unchanged** — still full
 `run_job_task` invocations of the real pipeline.
@@ -267,7 +268,22 @@ that way on purpose. Shortcutting those would remove the only thing in this suit
 that exercises the real end-to-end invocation path, which is the property most
 worth having.
 
-**The measured saving is projected, not yet observed.** 31 fewer task startups
-should remove roughly 20 minutes, but that number comes from arithmetic on the
-previous run's timings. The first suite run after this change is what confirms
-it — and if it does not, that is a finding rather than a rounding error.
+**The saving is ~16 minutes, not the ~20 first projected.** That estimate came
+from arithmetic on one run's timings — 31 fewer task startups multiplied out.
+Three runs since disagree with it:
+
+```
+before scoping          56.2 min
+after, run 1            36.6 min
+after, run 2            40.1 min
+after, run 3            41.8 min
+```
+
+So roughly **56 → 40**, and the figure moves a few minutes run to run. Two
+reasons the projection over-shot: `reset_environment` adds a task startup that
+was not in the arithmetic, and serverless startup times vary by a couple of
+minutes on their own.
+
+Recorded rather than quietly corrected, because a projection stated as a
+measurement is the same failure this suite exists to catch — the numbers above
+are what happened, not what was predicted.
