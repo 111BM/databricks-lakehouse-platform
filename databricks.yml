@@ -79,7 +79,11 @@ targets:
     workspace:
       host: https://dbc-081a6a55-88cd.cloud.databricks.com
       # root_path: /Workspace/superstore_qa_environment/.bundle/${bundle.name}/${bundle.target}
-      root_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_qa_environment/.bundle/${bundle.name}/${bundle.target}
+      # `~/` resolves to the deploying user's workspace home, matching the dev
+      # target above. Previously hardcoded to one user, which made the repo
+      # undeployable by anyone who cloned it without editing this line.
+      # Resolves identically for the current user, so this is a no-op here.
+      root_path: ~/superstore_qa_environment/.bundle/${bundle.name}/${bundle.target}
       # root_path: ~/.bundle/${bundle.name}/${bundle.target}
     resources:
       alerts:
