@@ -115,96 +115,6 @@ from superstore_backfill_utils import (                            # run-mode su
 # Initialize log_event to capture events in the gold dimensions pipeline
 logger_gold_dimensional = get_superstore_logger("superstore_gold_dimension_framework")
 
-# def get_incremental_silver_for_dims(
-#     spark, 
-#     silver_table: str, 
-#     gold_table: str, 
-#     master_run_id: str, 
-#     layer_run_id: str, 
-#     layer: str, 
-#     ingestion_col: str = "silver_ingestion_ts"
-# ):
-#     """
-#     Returns only new silver rows not yet ingested into gold dimension table.
-#     Optimized for serverless / partitioned Bronze tables.
-#     """
-
-#     # -----------------------------
-#     # Validate Silver table exists
-#     # -----------------------------
-#     if not spark.catalog.tableExists(silver_table):
-
-#         log_event(
-#             logger_gold_dimensional,
-#             "WARNING",
-#             f"Source Silver table '{silver_table}' does not exist. Skipping incremental fetch.",
-#             master_run_id=master_run_id,
-#             layer_run_id=layer_run_id,
-#             layer=GOLD_LAYER
-#         )
-
-#         return spark.createDataFrame([], StructType([]))
-
-
-#     # -----------------------------
-#     # Logging
-#     # -----------------------------
-#     log_event(
-#         logger_gold_dimensional,
-#         "INFO",
-#         f"Fetching incremental rows from silver table '{silver_table}' for Gold table '{gold_table}'",
-#         master_run_id=master_run_id,
-#         layer_run_id=layer_run_id,
-#         layer=layer,
-#         ingestion_col=ingestion_col
-#     )
-
-#     # -----------------------------
-#     # Get max ingestion from Gold
-#     # -----------------------------
-#     max_ingestion_ts = None
-#     if spark.catalog.tableExists(gold_table):
-#         max_ingestion_ts_row = (
-#             spark.table(gold_table)
-#             .agg(spark_max(ingestion_col).alias("max_ingest_ts"))
-#             .first()
-#         )
-#         max_ingestion_ts = max_ingestion_ts_row["max_ingest_ts"]
-#         log_event(
-#             logger_gold_dimensional,
-#             "INFO",
-#             f"Max ingestion timestamp found in gold table '{gold_table}': {max_ingestion_ts}",
-#             master_run_id=master_run_id,
-#             layer_run_id=layer_run_id,
-#             layer=GOLD_LAYER
-#         )
-
-#     # Push filter down to silver partitions
-#     silver_df = spark.table(silver_table)
-#     if max_ingestion_ts:
-#         incremental_df = silver_df.filter(col(ingestion_col) > max_ingestion_ts)
-#     else:
-#         incremental_df = silver_df
-#         log_event(
-#             logger_gold_dimensional,
-#             "INFO",
-#             f"Gold table '{gold_table}' does not exist. Returning full silver table.",
-#             master_run_id=master_run_id,
-#             layer_run_id=layer_run_id,
-#             layer=GOLD_LAYER
-#         )
-#     row_count = incremental_df.count()
-#     log_event(
-#         logger_gold_dimensional,
-#         "INFO",
-#         f"Incremental silver rows to process: {row_count}",
-#         master_run_id=master_run_id,
-#         layer_run_id=layer_run_id,
-#         layer=GOLD_LAYER
-#     )   
-    
-#     return incremental_df
-
 
 # The clock a windowed run selects on. Bronze ingestion time, matching what
 # Silver filters on and what the facts framework already used, so one window
@@ -444,7 +354,6 @@ def read_silver_table(
     )
     try:
         # Read the Delta table into a DataFrame incrementally
-        # silver_df = get_incremental_silver_for_dims(spark, silver_table, gold_table, master_run_id=master_run_id, layer_run_id=layer_run_id, layer=GOLD_LAYER, ingestion_col="silver_ingestion_ts")
 
         # Read the Delta table into a DataFrame incrementally (with backfill support)
         silver_df = get_incremental_silver_for_dims(
@@ -571,7 +480,6 @@ def prepare_scd2_columns(
         df = silver_df.withColumn("effective_from", col("silver_ingestion_ts"))
 
         # Add gold load timestamp
-        # df = df.withColumn("gold_ingestion_ts", current_timestamp())
         df = (
             df.withColumn(hash_column, sha2(concat_ws("||", *[coalesce(col(c), lit("")) for c in entity_columns]), 256))  # Generate SHA-256 hash for full row
             .withColumn("gold_ingestion_ts", current_timestamp())  # Add timestamp for tracking
@@ -639,7 +547,6 @@ def compute_scd2_timeline(
             )
             .withColumn("is_current", col("next_effective_from").isNull())
             .drop("next_effective_from")
-            # .dropDuplicates([entity_id_column, hash_column])
         )
         log_event(
             logger_gold_dimensional,
@@ -792,49 +699,14 @@ def merge_into_gold_table_scd2(
             layer=GOLD_LAYER
         )
 
-        # # -----------------------------
-        # # MERGE OPERATION (SINGLE ATOMIC SCD2)
-        # # -----------------------------
-        # (
-        #     gold_delta.alias("tgt")
-        #     .merge(
-        #         repaired_df.alias("src"),
-        #         merge_condition
-        #     )
-
-        #     # -------------------------------------------------------
-        #     # WHEN MATCHED → CLOSE OLD VERSION ONLY IF CHANGED
-        #     # -------------------------------------------------------
-        #     .whenMatchedUpdate(
-        #         condition=f"NOT (tgt.{hash_column} <=> src.{hash_column})",
-        #         set={
-        #             "effective_to": expr("src.effective_from - INTERVAL 1 SECOND"),
-        #             "is_current": expr("false"),
-        #         }
-        #     )
-
-        #     # -------------------------
-        #     # WHEN NOT MATCHED → INSERT NEW VERSION
-        #     # -------------------------
-        #     .whenNotMatchedInsert(
-        #         values={
-        #             **{c: f"src.{c}" for c in repaired_df.columns},
-        #             "is_current": expr("true"),
-        #             "effective_to": expr("cast(null as timestamp)")
-        #         }
-        #     )
-        #     # # -------------------------
-        #     # # SOFT DELETE
-        #     # # -------------------------
-        #     # .whenNotMatchedBySourceUpdate(
-        #     #     condition="tgt.is_current = true",
-        #     #     set={
-        #     #         "is_current": expr("false"),
-        #     #         "effective_to": expr("current_timestamp()")
-        #     #     }
-        #     # )
-        #     .execute()
-        # )
+        # Deliberately two statements, not one. A single MERGE cannot express
+        # SCD2 here: the merge condition matches a source row against the
+        # CURRENT target row, so once it matches, whenNotMatchedInsert never
+        # fires for that key and the replacement version is never inserted.
+        # Closing the old version and inserting the new one are therefore
+        # separate steps -- which also makes each one safe to re-run alone.
+        # Soft deletes are not a third branch of this merge either: they act
+        # on rows absent from the source, and are handled by handle_soft_deletes.
 
         # -----------------------------
         # STEP 1: Close old records that changed
@@ -932,13 +804,7 @@ def merge_into_gold_table_scd2(
             layer=GOLD_LAYER
         )
 
-        # # --- METRICS: read immediately after merge ---
-        # hist = gold_delta.history(1).select("operationMetrics").collect()[0][0]
 
-        # merge_metrics = {
-        #     "inserted": int(hist.get("numTargetRowsInserted", 0)),
-        #     "updated": int(hist.get("numTargetRowsUpdated", 0)),  # includes soft deletes
-        # }
 
 
     except Exception as e:
@@ -982,8 +848,6 @@ def handle_soft_deletes(
     # Get Delta table reference
     gold_delta = DeltaTable.forName(spark, gold_tbl)
 
-    # # Extract current Silver keys (source of truth)
-    # silver_ids = silver_df.select(entity_id_column).distinct()
     # Read FULL silver table, not incremental
     full_silver_df = spark.table(silver_table)
     silver_ids = full_silver_df.select(entity_id_column).distinct()
@@ -1042,191 +906,6 @@ def handle_soft_deletes(
 # -----------------------------
 # Metrics for Observability to metrics table
 # -----------------------------
-# def collect_metrics(
-#     spark,
-#     repaired_df,
-#     dim_gold_before_merge,
-#     gold_tbl: str,
-#     layer_name: str,
-#     silver_table: str,
-#     table_name: str,
-#     table_type: str,
-#     entity_id_column: str,
-#     silver_hash_column: str,
-#     gold_hash_column: str,
-#     metrics_table: str,
-#     master_run_id: str,
-#     layer_run_id: str,
-#     layer: str,
-#     start_ts,
-#     end_ts,
-#     duration_secs,
-#     run_status: str,
-#     max_rows_per_bucket: int,
-#     notes: str = ""
-    
-# ):
-#     """
-#     Collects metrics on SCD2 processing for auditing and monitoring:
-#     - Counts new, updated, and current records
-#     - Uses bucketed approach for large datasets to avoid driver overload
-#     - Writes results to dedicated metrics dashboard table
-#     - Supports master_run_id and layer_run_id for pipeline observability
-#     """
-#     log_event(
-#         logger_gold_dimensional,
-#         "INFO",
-#         f"Collecting SCD2 metrics for {gold_tbl}",
-#         master_run_id=master_run_id,
-#         layer_run_id=layer_run_id,
-#         layer=GOLD_LAYER
-#     )
-
-#     # Initialize defaults
-#     # -----------------------------
-#     inserted_rows = 0
-#     updated_rows = 0
-#     unchanged_rows = 0
-#     soft_deleted_rows = 0
-#     active_rows = 0  # Fact tables usually append, no soft deletes unless modeled
-#     throughput_rows_per_sec = 0.0
-#     skew_ratio = 0.0
-
-
-#     # ------------------------------------------------------------------
-#     # CASE 1: Detect missing or empty Silver table
-#     # ------------------------------------------------------------------
-#     # if  or dim_gold_before_merge is None:
-#     if repaired_df is None:
-#         log_event(
-#             logger_gold_dimensional,
-#             "WARN",
-#             f"No table found in Silver for {silver_table}",
-#             master_run_id=master_run_id,
-#             layer_run_id=layer_run_id,
-#             layer=GOLD_LAYER
-#         )
-#         read_rows = 0
-#         inserted_rows = 0
-#         updated_rows = 0
-#         unchanged_rows = 0
-#         soft_deleted_rows = 0
-#         active_rows = 0
-#         throughput_rows_per_sec = 0.0
-#         skew_ratio = 0.0
-#         notes = f"Source silver table '{silver_table}' does not exist"
-#         has_rows = False
-    
-    
-#     else:
-#         read_rows = repaired_df.count()
-#         # Check if repaired_df has rows
-#         has_rows = read_rows > 0
-
-#         # ------------------------------------------------------
-#         # CASE 2: FIRST LOAD (Gold table does not exist yet)
-#         # ------------------------------------------------------
-#         # elif has_rows and dim_gold_before_merge.limit(1).count() == 0:
-#         if dim_gold_before_merge is None or dim_gold_before_merge.limit(1).count() == 0:
-#             log_event(
-#                 logger_gold_dimensional,
-#                 "INFO",
-#                 f"First load detected for Gold table: {gold_tbl}",
-#                 master_run_id=master_run_id,
-#                 layer_run_id=layer_run_id,
-#                 layer=layer
-#             )
-#             inserted_rows = read_rows
-#             # updated_rows = 0
-#             # unchanged_rows = 0
-#             active_rows = read_rows
-
-#         # ------------------------------------------------------
-#         # CASE 3: NORMAL SCD2 COMPARISON
-#         # ------------------------------------------------------
-#         elif has_rows:
-#             gold_current = dim_gold_before_merge.filter(col("is_current") == True)
-        
-#             # -----------------------------
-#             # Bucketization
-#             # -----------------------------
-#             # Split repaired_df into buckets to avoid overwhelming the Spark driver
-#             # Each bucket is a subset of rows based on a hash of the entity_id
-#             num_buckets = max(1, math.ceil(read_rows / max_rows_per_bucket))
-#             repaired_df_buckets = repaired_df.withColumn("_bucket", (hash(col(entity_id_column)) % num_buckets))
-
-#             # Process each bucket separately
-#             for b in range(num_buckets):
-#                 # Select only rows in this bucket and remove the temporary _bucket column
-#                 bucket_df = repaired_df_buckets.filter(col("_bucket") == b).drop("_bucket")
-#                 if bucket_df.limit(1).count() == 0:
-#                     # Skip empty buckets
-#                     continue
-
-#                 # -----------------------------
-#                 # Rows inserted: present in repaired_df but not in gold_df
-#                 # left_anti join returns only rows in bucket_df with no matching entity_id in gold_df
-#                 # -----------------------------
-#                 inserted = bucket_df.alias("src").join(
-#                     gold_current.select(entity_id_column).alias("tgt"),
-#                     on=entity_id_column,
-#                     how="left_anti"
-#                 ).count()
-#                 inserted_rows +=inserted
-
-
-#                 # -----------------------------
-#                 # Current matching rows: entity_id exists in both repaired_df and gold_df
-#                 # -----------------------------
-#                 matching_current = bucket_df.alias("src").join(
-#                     gold_current.alias("tgt"),
-#                     on=entity_id_column,
-#                     how="inner"
-#                 )
-
-#                 # -----------------------------
-#                 # Rows updated: entity_id exists in both, but hash value differs (data changed)
-#                 # -----------------------------
-#                 updated= matching_current.filter(
-#                     col(f"src.{silver_hash_column}") != col(f"tgt.{silver_hash_column}")
-#                 ).count()
-#                 updated_rows += updated
-                
-
-#                 # -----------------------------
-#                 # Rows unchanged: entity_id exists in both and hash is identical (no data change)
-#                 # -----------------------------
-#                 unchanged = matching_current.filter(
-#                     col(f"src.{silver_hash_column}") == col(f"tgt.{silver_hash_column}")
-#                 ).count()
-#                 unchanged_rows+= unchanged
-                
-
-#             # -----------------------------
-#             # CURRENT ROWS (AFTER MERGE STATE)
-#             # ----------------------------- 
-#             if spark.catalog.tableExists(gold_tbl):
-#                 active_rows = spark.table(gold_tbl).filter(col("is_current") == True).count()
-
-
-#             # # -----------------------------
-#             # # Total current rows in gold table
-#             # # is_current = True identifies the active/latest version of each entity
-#             # # -----------------------------
-#             # active_rows = spark.table(gold_tbl).filter(col("is_current") == True).count() if gold_df is not None else 0
-
-#             # -----------------------------
-#             # Soft-deleted rows: rows currently marked as active in gold but missing from repaired_df
-#             # left_anti join returns rows in gold_df not present in repaired_df
-#             # -----------------------------
-#             if has_rows:
-#                 soft_deleted_rows = gold_current.join(
-#                     repaired_df.select(entity_id_column),
-#                     on=entity_id_column,
-#                     how="left_anti"
-#                 ).count()
-
-
 def collect_metrics(
     spark,
     repaired_df,
@@ -1330,7 +1009,6 @@ def collect_metrics(
         # unchanged_rows = rows that came from Silver but did not trigger any SCD2 action
         # -----------------------------
         unchanged_rows = max(read_rows - (inserted_rows + updated_rows), 0)
-        # unchanged_rows = max(read_rows - inserted_rows, 0)
 
         # -----------------------------
         # CHANGE DETECTION (SCD2 aware)
@@ -1366,11 +1044,6 @@ def collect_metrics(
             notes = f"SCD2 changes applied to {gold_tbl}"
         
         run_status = "SUCCESS"
-
-        # -----------------------------
-        # soft_deleted_rows
-        # -----------------------------
-        # soft_deleted_rows=soft_deleted_rows
 
         # -----------------------------
         # Compute active and total rows 

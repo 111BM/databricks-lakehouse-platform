@@ -102,90 +102,6 @@ from superstore_backfill_utils import (                            # run-mode su
 # Used for tracking MERGE, SCD2, and metrics-related events
 logger_gold_facts = get_superstore_logger("superstore_gold_facts_framework")
 
-# def get_incremental_silver_for_facts(
-#     spark,
-#     silver_table: str,
-#     gold_table: str,
-#     master_run_id: str,
-#     layer_run_id: str,
-#     layer: str,
-#     ingestion_col: str = "silver_ingestion_ts",
-# ):
-#     """
-#     Returns only new Bronze rows not yet ingested into Silver.
-#     Optimized for serverless / partitioned Bronze tables.
-#     """
-
-#     # -----------------------------
-#     # Validate Silver table exists
-#     # -----------------------------
-#     if not spark.catalog.tableExists(silver_table):
-#         log_event(
-#             logger_gold_facts,
-#             "WARNING",
-#             f"Silver table '{silver_table}' does not exist. Skipping fact processing.",
-#             master_run_id=master_run_id,
-#             layer_run_id=layer_run_id,
-#             layer=GOLD_LAYER,
-#         )
-
-#         return spark.createDataFrame([], StructType([]))
-
-#     # -----------------------------
-#     # Start logging
-#     # -----------------------------
-#     log_event(
-#         logger_gold_facts,
-#         "INFO",
-#         f"Fetching incremental rows from silver table '{silver_table}' for Silver table '{silver_table}'",
-#         master_run_id=master_run_id,
-#         layer_run_id=layer_run_id,
-#         layer=GOLD_LAYER,
-#         ingestion_col=ingestion_col,
-#     )
-
-#     # -----------------------------
-#     # Get max ingestion from Gold
-#     # -----------------------------
-#     max_ingestion_ts = None
-#     if spark.catalog.tableExists(gold_table):
-#         max_ingestion_ts_row = spark.table(gold_table).agg(spark_max(ingestion_col).alias("max_ingest_ts")).first()
-#         max_ingestion_ts = max_ingestion_ts_row["max_ingest_ts"]
-#         log_event(
-#             logger_gold_facts,
-#             "INFO",
-#             f"Max ingestion timestamp found in gold table '{gold_table}': {max_ingestion_ts}",
-#             master_run_id=master_run_id,
-#             layer_run_id=layer_run_id,
-#             layer=GOLD_LAYER,
-#         )
-
-#     # Push filter down to silver partitions
-#     silver_df = spark.table(silver_table)
-#     if max_ingestion_ts:
-#         incremental_df = silver_df.filter(col(ingestion_col) > max_ingestion_ts)
-#     else:
-#         incremental_df = silver_df
-#         log_event(
-#             logger_gold_facts,
-#             "INFO",
-#             f"Gold table '{gold_table}' does not exist. Returning full silver table.",
-#             master_run_id=master_run_id,
-#             layer_run_id=layer_run_id,
-#             layer=GOLD_LAYER,
-#         )
-#     row_count = incremental_df.count()
-#     log_event(
-#         logger_gold_facts,
-#         "INFO",
-#         f"Incremental silver rows to process: {row_count}",
-#         master_run_id=master_run_id,
-#         layer_run_id=layer_run_id,
-#         layer=GOLD_LAYER,
-#     )
-
-#     return incremental_df
-
 def get_incremental_silver_for_facts(
     spark, 
     silver_table: str, 
@@ -329,17 +245,6 @@ def read_silver_table(
     )
 
     try:
-        # # Read the Delta table into a DataFrame incrementally
-        # df = get_incremental_silver_for_facts(
-        #     spark,
-        #     silver_table,
-        #     gold_table,
-        #     master_run_id=master_run_id,
-        #     layer_run_id=layer_run_id,
-        #     layer=GOLD_LAYER,
-        #     ingestion_col="silver_ingestion_ts",
-        # )
-
         # Read the Delta table into a DataFrame incrementally (with backfill support)
         df = get_incremental_silver_for_facts(
             spark, 
@@ -444,7 +349,6 @@ def prepare_fact_columns(df, master_run_id: str, entity_columns, hash_column:str
     )
     
     # Add gold load timestamp
-    # df = df.withColumn("gold_ingestion_ts", current_timestamp())
     df = (
         df.withColumn(hash_column, sha2(concat_ws("||", *[coalesce(col(c), lit("")) for c in entity_columns]), 256))  # Generate SHA-256 hash for full row
         .withColumn("gold_ingestion_ts", current_timestamp())  # Add timestamp for tracking

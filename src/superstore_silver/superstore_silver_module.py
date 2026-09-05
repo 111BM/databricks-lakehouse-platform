@@ -86,12 +86,6 @@ Best Practices / Notes:
 ==============================================================
 """
 # -----------------------------
-# Spark Timezone Initialization
-# -----------------------------
-# Optional timezone override (kept commented to allow environment-level control)
-# spark.conf.set("spark.sql.session.timeZone", "Australia/Sydney")
-
-# -----------------------------
 # Core Python Utilities
 # -----------------------------
 import builtins  # Used for built-in round() in metrics calculations
@@ -149,11 +143,6 @@ DATE_FORMATS = [
 ]
 
 # -----------------------------
-# Optional Timezone Library
-# -----------------------------
-# import pytz  # Can be used for timezone conversions if required
-
-# -----------------------------
 # UUID Utilities
 # -----------------------------
 from uuid import uuid4  # Generates unique identifiers for tracking runs/events
@@ -188,118 +177,6 @@ from pyspark.sql import SparkSession  # Spark session reference (used if initial
 # -----------------------------
 # Initialize logger to capture events in the silver transformation pipeline
 logger_silver = get_superstore_logger("superstore_silver_module")
-
-# def get_incremental_bronze(
-#     spark: SparkSession,
-#     bronze_table: str,
-#     silver_table: str,
-#     master_run_id: str,
-#     layer_run_id: str,
-#     ingestion_col: str = "bronze_ingestion_ts",
-#     required_table: bool = False  # New flag: raise error if True, skip if False
-# ) -> DataFrame:
-#     """
-#     Returns only new Bronze rows not yet ingested into Silver.
-#     Optimized for serverless / partitioned Bronze tables.
-    
-#     Handles missing Bronze tables gracefully:
-#     - If required_table=True: raises Exception
-#     - If required_table=False: returns empty DataFrame
-#     """
-#     # -------------------------------
-#     # Check if Bronze table exists
-#     # -------------------------------
-#     if not spark.catalog.tableExists(bronze_table):
-#         msg = f"Source bronze table '{bronze_table}' does not exist"
-#         if required_table:
-#             log_event(
-#                 logger_silver,
-#                 "ERROR",
-#                 msg,
-#                 master_run_id=master_run_id,
-#                 layer_run_id=layer_run_id,
-#                 layer=SILVER_LAYER
-#             )
-#             raise Exception(msg)
-#         else:
-#             log_event(
-#                 logger_silver,
-#                 "WARN",
-#                 msg + ". Skipping.",
-#                 master_run_id=master_run_id,
-#                 layer_run_id=layer_run_id,
-#                 layer=SILVER_LAYER
-#             )
-#             # Return empty DataFrame with no schema
-#             # return spark.createDataFrame([], schema=None)
-#             return spark.createDataFrame([], StructType([]))
-    
-#     # -------------------------------
-#     # Log start of incremental fetch
-#     # -------------------------------
-#     log_event(
-#         logger_silver,
-#         "INFO",
-#         f"Fetching incremental rows from Bronze table '{bronze_table}' for Silver table '{silver_table}'",
-#         master_run_id=master_run_id,
-#         layer_run_id=layer_run_id,
-#         layer=SILVER_LAYER,
-#         ingestion_col=ingestion_col
-#     )
-    
-#     # -------------------------------
-#     # Determine last ingestion timestamp from Silver
-#     # -------------------------------
-#     max_bronze_ingestion_ts = None
-#     if spark.catalog.tableExists(silver_table):
-#         max_bronze_ingestion_ts_row = (
-#             spark.table(silver_table)
-#             .agg(spark_max(ingestion_col).alias("max_ingest_ts"))
-#             .first()
-#         )
-#         max_bronze_ingestion_ts = max_bronze_ingestion_ts_row["max_ingest_ts"]
-#         log_event(
-#             logger_silver,
-#             "INFO",
-#             f"Max ingestion timestamp found in Silver table '{silver_table}': {max_bronze_ingestion_ts}",
-#             master_run_id=master_run_id,
-#             layer_run_id=layer_run_id,
-#             layer=SILVER_LAYER
-#         )
-    
-#     # -------------------------------
-#     # Read Bronze table
-#     # -------------------------------
-#     bronze_df = spark.table(bronze_table)
-    
-#     # Apply incremental filter if Silver has data
-#     if max_bronze_ingestion_ts:
-#         incremental_df = bronze_df.filter(col(ingestion_col) > max_bronze_ingestion_ts)
-#     else:
-#         incremental_df = bronze_df
-#         log_event(
-#             logger_silver,
-#             "INFO",
-#             f"Silver table '{silver_table}' does not exist. Returning full Bronze table.",
-#             master_run_id=master_run_id,
-#             layer_run_id=layer_run_id,
-#             layer=SILVER_LAYER
-#         )
-    
-#     # -------------------------------
-#     # Log row count
-#     # -------------------------------
-#     has_data = incremental_df.limit(1).count() > 0
-#     log_event(
-#         logger_silver,
-#         "INFO",
-#         f"Incremental Bronze rows to process: {has_data}",
-#         master_run_id=master_run_id,
-#         layer_run_id=layer_run_id,
-#         layer=SILVER_LAYER
-#     )
-    
-#     return incremental_df
 
 # -------------------------------
 # Derived-table write (quarantine / audit)
@@ -459,7 +336,6 @@ def bronze_to_silver_prod(
         # Step 1: Read Bronze table
         # -------------------------------
         # Read the Delta table into a DataFrame incrementally
-        # df = get_incremental_bronze(spark, bronze_table, silver_table, master_run_id=master_run_id, layer_run_id=layer_run_id, ingestion_col="bronze_ingestion_ts")
 
         df = get_incremental_with_backfill(
             spark=spark,
@@ -570,35 +446,6 @@ def bronze_to_silver_prod(
             # -------------------------------
             # Step 3: Data Quality Checks
             # -------------------------------
-            # first approach
-            # dq_df = clean_df
-            # is_any_dirty_col = None
-
-            # # Null checks for all columns
-            # for c in business_cols:
-            #     col_dirty = col(c).isNull()
-            #     dq_df = dq_df.withColumn(f"is_{c}_dirty", col_dirty)
-            #     is_any_dirty_col = col_dirty if is_any_dirty_col is None else is_any_dirty_col | col_dirty
-
-            # # Regex validation for configured columns
-            # for c, regex in regex_cols.items():
-            #     dq_df = dq_df.withColumn(
-            #         f"is_{c}_dirty",
-            #         (~col(c).rlike(regex)) | col(f"is_{c}_dirty")
-            #     )
-            #     is_any_dirty_col = is_any_dirty_col | (~col(c).rlike(regex))
-
-            # # Categorical allowed values check
-            # for c, allowed_vals in categorical_allowed_vals.items():
-            #     dq_df = dq_df.withColumn(
-            #         f"is_{c}_dirty",
-            #         (~col(c).isin(allowed_vals)) | col(f"is_{c}_dirty")
-            #     )
-            #     is_any_dirty_col = is_any_dirty_col | (~col(c).isin(allowed_vals))
-
-            # # Aggregate flag for any dirty column
-            # dq_df = dq_df.withColumn("is_any_dirty", is_any_dirty_col)
-
             # Data quality: build error_columns (null + regex + categorical) — extracted, unit-tested
             dq_df = add_error_columns(
                 clean_df, business_columns, regex_cols, categorical_allowed_vals, severity
@@ -606,21 +453,6 @@ def bronze_to_silver_prod(
 
             # Business rule: ship_date should not be before order_date
             if "order_date" in business_columns and "ship_date" in business_columns:
-            #     date_formats = [
-            #         "d/M/yyyy", 
-            #         "dd-MM-yyyy",
-            #         "yyyy-MM-dd",
-            #         "dd/MM/yyyy",
-            #         "yyyy/MMM/d",
-            #         "yyyy MMM d",
-            #         "d MMMM yyyy"
-            #     ]
-
-            #     def parse_multi_format_date(column_name):
-            #         return coalesce(*[
-            #             try_to_date(col(column_name), fmt)
-            #             for fmt in date_formats
-            #         ])
                 def parse_multi_format_date(column_name):
                     return coalesce(*[
                         try_to_date(col(column_name), fmt)
@@ -656,8 +488,6 @@ def bronze_to_silver_prod(
             # -------------------------------
 
             # first apparoach
-            # good_rows_df = dq_df.filter(~col("is_any_dirty"))  # Keep rows that pass all data quality checks
-            # dirty_rows_df = dq_df.filter(col("is_any_dirty"))  # Rows that failed data quality checks
 
             # second appraoch
             good_rows_df = dq_df.filter(col("is_valid") == True)
@@ -740,7 +570,6 @@ def bronze_to_silver_prod(
                 )
 
             # Step 6b: Cast string columns to DATE only if they are of StringType
-            # date_formats = ["d/M/yyyy", "dd-MM-yyyy", "yyyy-MM-dd", "dd/MM/yyyy", "yyyy/MMM/d", "yyyy MMM d", "d MMMM yyyy"]
 
             # Explicitly cast order_date and ship_date to DateType using different formats if they are strings
             silver_cast_df = silver_df
@@ -753,7 +582,6 @@ def bronze_to_silver_prod(
                         # Try different date formats and coalesce the results to avoid nulls
                         silver_cast_df = silver_cast_df.withColumn(
                             c,
-                            # coalesce(*[try_to_date(col(c), f) for f in date_formats])  # Use multiple formats
                             coalesce(*[try_to_date(col(c), f) for f in DATE_FORMATS])  # Use multiple formats
                         )
                     # If the column is already a DateType, skip casting and leave it as is
@@ -850,7 +678,6 @@ def bronze_to_silver_prod(
                     silver_dedup_df.select(*dedups_selected_cols)
                     .withColumn(silver_col, row_hash(business_columns))  # Generate SHA-256 hash (shared helper)
                     .withColumn("silver_ingestion_ts", current_timestamp())  # Add timestamp for tracking
-                    # .dropDuplicates([silver_col])  # Deduplicate dedups rows using their hash
                     .repartition(shuffle_partitions, col(silver_col))
                 )
 
@@ -913,7 +740,6 @@ def bronze_to_silver_prod(
                             silver_dedup_df.alias("src"),
                             merge_condition
                         ).whenMatchedUpdate(
-                            # condition=f"tgt.{silver_col} != src.{silver_col}",
                             set={c: f"src.{c}" for c in update_columns}
                             ).whenNotMatchedInsertAll()
                              .withSchemaEvolution()
