@@ -18,3 +18,4 @@ scratch/**
 *.tfstate.*
 tfplan
 crash.log
+.venv-tests/
