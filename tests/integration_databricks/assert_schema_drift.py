@@ -35,12 +35,6 @@
 
 # COMMAND ----------
 
-# TEMPORARY -- deliberate failure to verify that CI goes red on a failed
-# assertion and that the task is not retried. Revert after the verification run.
-assert False, "DELIBERATE FAILURE: verifying CI result_state check -- revert me"
-
-# COMMAND ----------
-
 import sys
 
 # Table names come from assertion_helpers, which hardcodes ENV="integration_test",
