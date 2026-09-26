@@ -103,6 +103,13 @@ resources:
       # source schema change into a failed run. Declaring it makes that
       # dependency visible and reviewable instead of a platform default.
       #
+      # The declared count is a FLOOR, not a cap. Serverless auto-optimization
+      # is a separate per-task switch (disable_auto_optimization) that "may
+      # include additional retries", and it is deliberately left ON here, as
+      # Databricks recommends: every task below is safe to re-run, so an extra
+      # platform retry costs time, never correctness. The integration suite
+      # turns it OFF for its assertions, where a retry can only mislead.
+      #
       # Retrying is safe because every writing task is idempotent under
       # re-execution after a partial write: Auto Loader resumes from its
       # checkpoint; the entity split appends behind a per-entity watermark, one

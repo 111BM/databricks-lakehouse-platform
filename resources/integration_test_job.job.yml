@@ -9,19 +9,44 @@ resources:
         bronze / silver / gold each run as their own task so failures point to
         the exact layer.
 
-        The environment is reset BEFORE seeding, and cleaned up only on a
-        fully green run. A failed run therefore leaves its integration_test_*
-        schemas intact for a post-mortem, and the next run's reset guarantees
-        the clean start regardless.
+        The environment is reset BEFORE seeding and never cleaned up after, so
+        every run -- green or red -- leaves its integration_test_* schemas
+        intact for a post-mortem, and the next run's reset guarantees the clean
+        start regardless.
 
         Run:   databricks bundle run superstore_integration_test --target qa
-        A failed assertion fails its task -> fails the job (non-zero exit) so CI
-        can block the merge.
+        A failed assertion fails its task and, because every assertion is or
+        feeds a leaf task, the run ends FAILED. CI does not rely on that: it
+        reads result_state itself and fails on anything but SUCCESS (see
+        .github/workflows/integration-tests.yml).
 
         Notebook paths are bundle-relative (${workspace.file_path}) so the job
         reads the code the bundle deployed for the target. Assert notebooks get
         a helpers_path parameter pointing at the deployed _helpers folder.
 
+      # Retries and timeouts. Two kinds of task live here, with opposite needs.
+      #
+      # TEST HARNESS (reset, seeds, snapshots, assertions): never retried.
+      # max_retries: 0 alone is not enough -- Serverless auto-optimization is a
+      # separate switch that "may include additional retries", and with no
+      # policy set it retried failed assertions 17 times between 2026-08-13 and
+      # 08-21 (repair_history empty, each retry 4-5s after the failure, once
+      # twice in a row). All 17 failed again: an assertion re-reads data that is
+      # already written, so a retry can only waste time -- up to ~10 min each
+      # here -- or one day turn a flaky test green. disable_auto_optimization
+      # switches that off; a failure here must be seen the first time.
+      #
+      # PRODUCTION CODE (master_run_id_init, replay legs): the same policy as
+      # the identical tasks in superstore_lakehouse_job.job.yml, because these
+      # legs exist to exercise the production path, and a test that runs it
+      # under different rules is testing something else.
+      #
+      # run_job_task: max_retries 0. A retry would re-run the whole 18-task
+      # pipeline; that job already retries its own tasks and carries its own
+      # timeouts, so the policy lives there, once.
+      #
+      # Harness timeouts are 1800s against a measured worst of 365s (task
+      # startup, not work -- the seed is nine rows).
       tasks:
         # 0. Reset the isolated environment BEFORE seeding.
         #
@@ -42,6 +67,9 @@ resources:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/04_cleanup_integration
             source: WORKSPACE
           environment_key: integration_test_environment
+          timeout_seconds: 1800
+          max_retries: 0
+          disable_auto_optimization: true
 
         # 1. Seed dirty data into the isolated raw volume
         - task_key: seed_initial_data 
@@ -51,11 +79,15 @@ resources:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/01_seed_integration_data
             source: WORKSPACE
           environment_key: integration_test_environment
+          timeout_seconds: 1800
+          max_retries: 0
+          disable_auto_optimization: true
 
         # 2. Run the REAL pipeline, routed to integration_test_* schemas
         - task_key: run_pipeline_initial_load
           depends_on:
             - task_key: seed_initial_data 
+          max_retries: 0
           run_job_task:
             job_id: ${resources.jobs.superstore_data_platform.id}
             job_parameters:
@@ -75,6 +107,9 @@ resources:
             base_parameters:
               helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
           environment_key: integration_test_environment
+          timeout_seconds: 1800
+          max_retries: 0
+          disable_auto_optimization: true
 
         - task_key: assert_silver
           depends_on:
@@ -85,6 +120,9 @@ resources:
             base_parameters:
               helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
           environment_key: integration_test_environment
+          timeout_seconds: 1800
+          max_retries: 0
+          disable_auto_optimization: true
 
         - task_key: assert_gold_dim
           depends_on:
@@ -95,6 +133,9 @@ resources:
             base_parameters:
               helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
           environment_key: integration_test_environment
+          timeout_seconds: 1800
+          max_retries: 0
+          disable_auto_optimization: true
 
         - task_key: assert_gold_fact
           depends_on:
@@ -105,6 +146,9 @@ resources:
             base_parameters:
               helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
           environment_key: integration_test_environment
+          timeout_seconds: 1800
+          max_retries: 0
+          disable_auto_optimization: true
 
         # 4. Second incremental load: seed a changed + an unchanged customer
         - task_key: seed_changed_data
@@ -117,10 +161,14 @@ resources:
             notebook_path: ${workspace.file_path}/tests/integration_databricks/02_seed_scd2_change
             source: WORKSPACE
           environment_key: integration_test_environment
+          timeout_seconds: 1800
+          max_retries: 0
+          disable_auto_optimization: true
 
         - task_key: run_pipeline_incremental_load
           depends_on:
             - task_key: seed_changed_data
+          max_retries: 0
           run_job_task:
             job_id: ${resources.jobs.superstore_data_platform.id}
             job_parameters:
@@ -144,6 +192,9 @@ resources:
               # the state is still incremental and the shortfall exists.
               shared_utils_path: ${workspace.file_path}/src/superstore_shared_utilities
           environment_key: integration_test_environment
+          timeout_seconds: 1800
+          max_retries: 0
+          disable_auto_optimization: true
 
         # 5b. Schema drift. Runs after the SECOND load because that is the load
         #     carrying a column the first seed did not send — `Discount Reason`.
@@ -172,6 +223,9 @@ resources:
               # while reporting confidently about "the suite".
               helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
           environment_key: integration_test_environment
+          timeout_seconds: 1800
+          max_retries: 0
+          disable_auto_optimization: true
 
         # 6. Replay leg. The suite ran `incremental` only, so every windowed-mode
         #    defect was invisible to it — an append-only quarantine that doubled
@@ -197,6 +251,9 @@ resources:
               helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
               phase: "incremental"
           environment_key: integration_test_environment
+          timeout_seconds: 1800
+          max_retries: 0
+          disable_auto_optimization: true
 
         # ------------------------------------------------------------------
         # Replay legs: the three layers replay touches, not the whole DAG.
@@ -246,6 +303,10 @@ resources:
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
           environment_key: integration_test_environment
+          timeout_seconds: 1800
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
 
         - task_key: replay_1_silver
           depends_on:
@@ -263,6 +324,10 @@ resources:
               dry_run: "false"
             source: WORKSPACE
           environment_key: integration_test_environment
+          timeout_seconds: 3600
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
 
         - task_key: replay_1_gold_dims
           depends_on:
@@ -280,6 +345,10 @@ resources:
               dry_run: "false"
             source: WORKSPACE
           environment_key: integration_test_environment
+          timeout_seconds: 3600
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
 
         - task_key: replay_1_gold_facts
           depends_on:
@@ -297,6 +366,10 @@ resources:
               dry_run: "false"
             source: WORKSPACE
           environment_key: integration_test_environment
+          timeout_seconds: 3600
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
 
 
         - task_key: snapshot_after_replay_1
@@ -310,6 +383,9 @@ resources:
               helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
               phase: "replay_1"
           environment_key: integration_test_environment
+          timeout_seconds: 1800
+          max_retries: 0
+          disable_auto_optimization: true
 
         - task_key: replay_2_silver
           depends_on:
@@ -328,6 +404,10 @@ resources:
               dry_run: "false"
             source: WORKSPACE
           environment_key: integration_test_environment
+          timeout_seconds: 3600
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
 
         - task_key: replay_2_gold_dims
           depends_on:
@@ -345,6 +425,10 @@ resources:
               dry_run: "false"
             source: WORKSPACE
           environment_key: integration_test_environment
+          timeout_seconds: 3600
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
 
         - task_key: replay_2_gold_facts
           depends_on:
@@ -362,6 +446,10 @@ resources:
               dry_run: "false"
             source: WORKSPACE
           environment_key: integration_test_environment
+          timeout_seconds: 3600
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
 
 
         - task_key: assert_replay
@@ -374,6 +462,9 @@ resources:
             base_parameters:
               helpers_path: ${workspace.file_path}/tests/integration_databricks/_helpers
           environment_key: integration_test_environment
+          timeout_seconds: 1800
+          max_retries: 0
+          disable_auto_optimization: true
 
         # 7. There is deliberately NO end-of-run cleanup.
         #
@@ -414,6 +505,13 @@ resources:
       # and every downstream assertion failed for that reason alone.
       # queue + max_concurrent_runs: 1 makes the second run wait instead.
       max_concurrent_runs: 1
+
+      # Whole-suite ceiling. The four green runs since the DAG last changed
+      # (2026-08-21) took 40-42 min; 90 min is ~2x that. It sits inside the CI
+      # wait (100 min) which sits inside GitHub's job limit (110 min), so a
+      # stuck run ends as a Databricks TIMEDOUT that CI reports by name, rather
+      # than GitHub killing the job while the run carries on.
+      timeout_seconds: 5400
 
       queue:
         enabled: true

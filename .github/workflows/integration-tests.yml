@@ -4,13 +4,23 @@
 # Runs AFTER deploy.yml successfully deploys QA. Tests the real pipeline
 # end-to-end: Bronze → Silver → Gold with assertions at each layer.
 #
-# Runtime: ~50-55 minutes on Databricks. The replay leg (two extra full pipeline
-# runs, needed because idempotency is a replay-vs-replay property) more than
-# doubled the suite: measured 16m/21m/22m/34m before it, 52m after.
+# Runtime: 40-42 min on Databricks across the four green runs since the DAG
+# last changed (2026-08-21).
 #
-# The job timeout below must stay comfortably above the top of that range: when
-# it trips, GitHub cancels the job while the Databricks run carries on, and the
-# build goes red for the clock rather than for a fault.
+# Three timeouts, nested on purpose: the Databricks job stops itself at 90 min
+# (timeout_seconds in resources/integration_test_job.job.yml), this workflow
+# waits up to 100, and GitHub kills the job at 110. Innermost first means a
+# stuck run ends as a Databricks TIMEDOUT that the result check below names,
+# rather than GitHub cancelling the job while the run carries on.
+#
+# Pass/fail is judged on result_state, not on the CLI's exit code. `databricks
+# bundle run` (CLI v0.295.0, bundle/run/job.go) exits 0 on SUCCESS_WITH_FAILURES
+# -- the state falls through to a `// TODO: handle other result states` branch.
+# Until 2026-08-21 the suite ended in an ALL_DONE cleanup task, so any failed
+# assertion produced exactly that state: runs with up to 11 failed tasks
+# reported "succeeded", the CLI exited 0, and any of them started from here
+# would have printed "passed". Removing the cleanup
+# fixed it by accident; this check fixes it on purpose, whatever the DAG shape.
 #
 # Philosophy: Fail fast, no retries. If integration tests fail, QA is broken
 # and needs immediate human investigation, not automatic retries that mask the
@@ -29,7 +39,7 @@ jobs:
   integration-tests:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90  # Safety: prevent hung jobs. See runtime note above.
+    timeout-minutes: 110  # Outermost of three nested timeouts -- see header.
     
     env:
       DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
@@ -43,13 +53,30 @@ jobs:
       - name: Install Databricks CLI
         uses: databricks/setup-cli@main
       
-      # Run integration tests (no retry - fail fast on real issues)
+      # Run integration tests (no retry - fail fast on real issues).
+      # Judged on result_state, not the CLI exit code -- see header.
       - name: Run integration test job
         run: |
-          echo "Running E2E integration tests on QA..."
-          databricks bundle run superstore_integration_test --target qa
-          echo "✅ Integration tests passed!"
-      
+          JOB_ID=$(databricks bundle summary --target qa -o json \
+            | jq -r '.resources.jobs.superstore_integration_test.id')
+
+          RUN=$(databricks jobs run-now "$JOB_ID" --timeout 100m -o json)
+          RESULT=$(echo "$RUN" | jq -r '.state.result_state')
+
+          echo "Run:    $(echo "$RUN" | jq -r '.run_page_url')"
+          echo "Result: $RESULT"
+
+          # Allowlist, not blocklist: any state other than SUCCESS fails,
+          # including ones Databricks has not added yet.
+          if [ "$RESULT" != "SUCCESS" ]; then
+            echo "::error::Integration test ended $RESULT, not SUCCESS"
+            echo "$RUN" | jq -r '.tasks[]
+              | select(.state.result_state != "SUCCESS")
+              | "  \(.task_key) (attempt \(.attempt_number // 0)): \(.state.result_state)"'
+            exit 1
+          fi
+          echo "✅ Integration tests passed"
+
       # Capture job details for audit
       - name: Capture test run details
         if: always()
