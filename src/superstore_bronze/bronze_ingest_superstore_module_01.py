@@ -273,11 +273,6 @@ def bronze_ingest_incremental(
         )  # Allow schema changes
         .load(raw_source_file_path)  # Raw source data path
     )
-
-    # if df_stream.limit(1).count() == 0:
-    #     log_event(ogger_bronze_ingest, "INFO", "No new files detected since last run. Pipeline skipped.")
-    #     raise SystemExit("No new data")
-
     # -----------------------------
     # Step 3: Add Metadata Columns
     # -----------------------------
@@ -302,9 +297,6 @@ def bronze_ingest_incremental(
         .withColumn(
             "source_file_modification_time", col("_metadata.file_modification_time")
         )  # Track last modified time
-        # .withColumn(
-        #     "raw_table_name", regexp_replace(col("source_file_name"), r"\.csv$", "")
-        # )  # Clean file name for table name
     )
 
     # -----------------------------

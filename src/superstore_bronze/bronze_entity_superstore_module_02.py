@@ -494,7 +494,6 @@ def bronze_entity_incremental_append(
     table_name = table(get_bronze_schema(), entity_cfg["table_name"].split('.')[-1])
     partition_col = entity_cfg["partition_col"]
     all_columns = entity_cfg["columns"] + entity_cfg["metadata_columns"]
-    # source_table = entity_cfg["source_table"]
     source_table = table(get_bronze_schema(), entity_cfg["source_table"].split('.')[-1])
 
     # Read raw Bronze table
