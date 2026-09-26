@@ -96,9 +96,12 @@ which can be fixed by an automatic retry: true
 - **0 rows rescued** — the column was properly added, not rescued
 - `schema_drift` gained a `NEW` row
 
-And no retry is configured anywhere: **Databricks retries this error class on
-its own**. So the pre-fix behaviour was a red Bronze task that healed silently,
-leaving a run history saying only *"failed, then didn't"*.
+At the time no retry was configured anywhere: **Serverless retried the failed
+task on its own**. So the pre-fix behaviour was a red Bronze task that healed
+silently, leaving a run history saying only *"failed, then didn't"*. The Bronze
+task now declares `max_retries: 2` in
+[superstore_lakehouse_job.job.yml](../resources/superstore_lakehouse_job.job.yml),
+so this recovery no longer rests on a platform default nobody chose.
 
 **An in-pipeline restart was attempted and does not work.** The orchestrator
 wraps the ingest in a bounded retry gated on `is_schema_evolution_error`, but it
@@ -117,12 +120,12 @@ command is terminated from outside. Two attempts to match it failed, the second
 after widening from `str(e)` to the full Python traceback.
 
 The code is left in place: it is harmless, correctly gated, and would work if
-the marker ever reaches Python. But **the platform's own automatic retry is what
-actually recovers this run**, and pursuing a cosmetic improvement to run history
+the marker ever reaches Python. But **the task-level retry is what actually
+recovers this run**, and pursuing a cosmetic improvement to run history
 past that point is not worth fighting async stream handling for.
 
 So the honest description of the current behaviour is: a new column costs one
-failed Bronze attempt, Databricks retries it unprompted, the retry succeeds and
+failed Bronze attempt, the task's declared retry restarts it, the retry succeeds and
 adds the column, and `schema_drift` records the event. The failure is visible in
 run history; the *reason* for it is visible in the drift table.
 

@@ -92,6 +92,46 @@ resources:
         - name: SUPERSTORE_ENV
           default: ${var.SUPERSTORE_ENV}
 
+      # Timeouts and retries are explicit on every task.
+      #
+      # RETRIES. With no policy set, Serverless already retried failed tasks
+      # once, immediately and invisibly: across 213 dev/qa/prod runs
+      # (2026-07-24 to 2026-09-26), 20 failed tasks got an attempt 1 that no
+      # config asked for, and 15 of them succeeded on it. Bronze depends on
+      # it -- Auto Loader's addNewColumns FAILS the stream on first sight of a
+      # new column and succeeds on restart -- so a policy of 0 would turn every
+      # source schema change into a failed run. Declaring it makes that
+      # dependency visible and reviewable instead of a platform default.
+      #
+      # Retrying is safe because every writing task is idempotent under
+      # re-execution after a partial write: Auto Loader resumes from its
+      # checkpoint; the entity split appends behind a per-entity watermark, one
+      # atomic commit each; Silver MERGEs, and replaces quarantine/audit for the
+      # window it re-reads; Gold SCD2's close and insert are each re-runnable
+      # alone; marts and views are CREATE OR REPLACE, features MERGE.
+      #
+      #   - bronze_source_acquisition: 2 retries, 5 min apart. External HTTP
+      #     (GitHub Contents API) -- the one task whose failures are most likely
+      #     transient, and rate limits need time, not an immediate retry.
+      #   - superstore_bronze_layer: 2 retries. One is consumed by any schema
+      #     evolution restart, leaving one for a genuine transient failure.
+      #   - everything else: 1 retry, matching what the platform already did.
+      #
+      # A deterministic failure (bad config, broken code) still costs one wasted
+      # attempt before the run fails. That is the accepted price.
+      #
+      # retry_on_timeout is false everywhere. A timeout means a task ran 3x+
+      # longer than it ever has; retrying it just doubles the time to find out.
+      #
+      # TIMEOUTS. Set from measured execution time, not guessed: the longest
+      # successful attempt of each task across the same runs, including 3M-row
+      # loads, was 1,125s for Silver, ~655s for the other layers, and ~615s
+      # even for trivial views (median 8-20s -- the tail is platform stalls,
+      # not work). A timeout below that tail would kill healthy runs.
+      #   - Bronze / Silver / Gold layers: 3600s (Silver's worst is 19 min)
+      #   - init, acquisition, marts, features, views: 1800s (worst 11 min)
+      # Before this, nothing in the job bounded a hung task: it would hold the
+      # queue against the next weekly run and send no failure email.
       tasks:
         - task_key: superstore_pipeline_master_run_id_init
           notebook_task:
@@ -102,6 +142,10 @@ resources:
               SUPERSTORE_PIPELINE_NAME: ${var.SUPERSTORE_PIPELINE_NAME}
               SUPERSTORE_PIPELINE_VERSION: ${var.SUPERSTORE_PIPELINE_VERSION}
           environment_key: superstore_serverless_environment
+          timeout_seconds: 1800
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
         - task_key: superstore_catalog_and_schemas_init
           depends_on:
             - task_key: superstore_pipeline_master_run_id_init
@@ -115,6 +159,10 @@ resources:
                 n_id}}"
             source: WORKSPACE
           environment_key: superstore_serverless_environment
+          timeout_seconds: 1800
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
         # Acquire source files from the external HTTP feed into the landing volume
         # before Auto Loader runs. Skips itself in integration_test (seed owns that data).
         - task_key: bronze_source_acquisition
@@ -124,6 +172,10 @@ resources:
             notebook_path: ${workspace.file_path}/src/superstore_bronze/bronze_source_acquisition
             source: WORKSPACE
           environment_key: superstore_serverless_environment
+          timeout_seconds: 1800
+          max_retries: 2
+          min_retry_interval_millis: 300000
+          retry_on_timeout: false
         - task_key: superstore_bronze_layer
           depends_on:
             - task_key: superstore_pipeline_master_run_id_init
@@ -139,6 +191,10 @@ resources:
                 n_id}}"
             source: WORKSPACE
           environment_key: superstore_serverless_environment
+          timeout_seconds: 3600
+          max_retries: 2
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
         - task_key: superstore_silver_layer
           depends_on:
             - task_key: superstore_pipeline_master_run_id_init
@@ -153,6 +209,10 @@ resources:
                 n_id}}"
             source: WORKSPACE
           environment_key: superstore_serverless_environment
+          timeout_seconds: 3600
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
         - task_key: superstore_gold_layer_dimensions
           depends_on:
             - task_key: superstore_pipeline_master_run_id_init
@@ -167,6 +227,10 @@ resources:
                 n_id}}"
             source: WORKSPACE
           environment_key: superstore_serverless_environment
+          timeout_seconds: 3600
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
         - task_key: superstore_gold_layer_facts
           depends_on:
             - task_key: superstore_pipeline_master_run_id_init
@@ -181,6 +245,10 @@ resources:
                 n_id}}"
             source: WORKSPACE
           environment_key: superstore_serverless_environment
+          timeout_seconds: 3600
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
         - task_key: features_customer
           depends_on:
             - task_key: superstore_gold_layer_facts
@@ -189,6 +257,10 @@ resources:
             notebook_path: ${workspace.file_path}/src/features/features_customer
             source: WORKSPACE
           environment_key: superstore_serverless_environment
+          timeout_seconds: 1800
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
         - task_key: features_customer_product
           depends_on:
             - task_key: superstore_gold_layer_facts
@@ -196,6 +268,10 @@ resources:
             notebook_path: ${workspace.file_path}/src/features/features_customer_product
             source: WORKSPACE
           environment_key: superstore_serverless_environment
+          timeout_seconds: 1800
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
         - task_key: features_product
           depends_on:
             - task_key: superstore_gold_layer_facts
@@ -203,6 +279,10 @@ resources:
             notebook_path: ${workspace.file_path}/src/features/features_product
             source: WORKSPACE
           environment_key: superstore_serverless_environment
+          timeout_seconds: 1800
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
         - task_key: features_sales_timeseries
           depends_on:
             - task_key: superstore_gold_layer_facts
@@ -210,6 +290,10 @@ resources:
             notebook_path: ${workspace.file_path}/src/features/features_sales_timeseries
             source: WORKSPACE
           environment_key: superstore_serverless_environment
+          timeout_seconds: 1800
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
         - task_key: mart_customer_360
           depends_on:
             - task_key: superstore_gold_layer_facts
@@ -218,6 +302,10 @@ resources:
             notebook_path: ${workspace.file_path}/src/marts/mart_customer_360
             source: WORKSPACE
           environment_key: superstore_serverless_environment
+          timeout_seconds: 1800
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
         - task_key: customer_kpi_view
           depends_on:
             - task_key: mart_customer_360
@@ -225,6 +313,10 @@ resources:
             notebook_path: ${workspace.file_path}/src/metrics/customer_kpi
             source: WORKSPACE
           environment_key: superstore_serverless_environment
+          timeout_seconds: 1800
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
         - task_key: mart_production_performance
           depends_on:
             - task_key: superstore_gold_layer_dimensions
@@ -233,6 +325,10 @@ resources:
             notebook_path: ${workspace.file_path}/src/marts/mart_production_performance
             source: WORKSPACE
           environment_key: superstore_serverless_environment
+          timeout_seconds: 1800
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
         - task_key: product_insights_kpi_view
           depends_on:
             - task_key: mart_production_performance
@@ -240,6 +336,10 @@ resources:
             notebook_path: ${workspace.file_path}/src/metrics/product_insights_kpi
             source: WORKSPACE
           environment_key: superstore_serverless_environment
+          timeout_seconds: 1800
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
         - task_key: mart_sales_daily
           depends_on:
             - task_key: superstore_gold_layer_dimensions
@@ -248,6 +348,10 @@ resources:
             notebook_path: ${workspace.file_path}/src/marts/mart_sales_daily
             source: WORKSPACE
           environment_key: superstore_serverless_environment
+          timeout_seconds: 1800
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
         - task_key: metrics_business_kpi_view
           depends_on:
             - task_key: mart_sales_daily
@@ -256,6 +360,10 @@ resources:
             notebook_path: ${workspace.file_path}/src/metrics/metrics_business_kpi
             source: WORKSPACE
           environment_key: superstore_serverless_environment
+          timeout_seconds: 1800
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
         - task_key: metrics_daily_kpi_view
           depends_on:
             - task_key: mart_sales_daily
@@ -263,6 +371,17 @@ resources:
             notebook_path: ${workspace.file_path}/src/metrics/metrics_daily_kpi
             source: WORKSPACE
           environment_key: superstore_serverless_environment
+          timeout_seconds: 1800
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
+      # Whole-run ceiling. The worst task on each step of the critical path
+      # (init -> schemas -> bronze -> silver -> gold -> mart -> view) sums to
+      # ~75 min if every stall landed on one run; typical prod is under 6 min.
+      # Two hours leaves margin for a retry without letting a stuck run
+      # overlap the next schedule. The integration test invokes this job via
+      # run_job_task, so the ceiling applies to each of its pipeline runs too.
+      timeout_seconds: 7200
       queue:
         enabled: true
       environments:
