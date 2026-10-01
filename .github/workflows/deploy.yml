@@ -4,7 +4,8 @@
 # Deploy on merge with comprehensive safety gates:
 #   - Unit tests (gate: blocks deploy if tests fail)
 #   - Bundle validation (gate: catches config errors early)
-#   - Manual approval for prod (gate: human review required)
+#   - Prod deploys only when started by hand (workflow_dispatch) -- a
+#     deliberate action, not a reviewed approval (see deploy-prod)
 #   - Code coverage tracking (portfolio value: quality metrics)
 #
 # Branch → Target:  dev → dev, qa → qa, main → prod
@@ -15,6 +16,9 @@ name: Superstore Data Platform CI/CD
 on:
   push:
     branches: [dev, qa, main]
+  # Adds the "Run workflow" button in the Actions tab. It is the only way prod
+  # deploys: a push to main runs the unit tests and stops there.
+  workflow_dispatch:
 
 jobs:
   # --------------------------------------------------------------------------
@@ -157,19 +161,32 @@ jobs:
         run: databricks bundle deploy --target qa
 
   # --------------------------------------------------------------------------
-  # Job 3: Deploy to Production (Manual Approval Required)
+  # Job 3: Deploy to Production (started by hand only)
   # --------------------------------------------------------------------------
   deploy-prod:
     needs: unit-tests
-    if: github.ref == 'refs/heads/main'
+    # Only when started by hand from main: Actions -> this workflow -> Run
+    # workflow -> main. A push to main no longer deploys prod.
+    #
+    # This replaces an approval gate that never worked. The job used to declare
+    # `environment: production` with a comment promising manual approval, but a
+    # GitHub environment blocks only when required reviewers are configured, and
+    # on a private repository that needs GitHub Enterprise -- so every push to
+    # main deployed prod unattended (measured: 80-120 s in 2026-08, 106 s on
+    # 2026-10-01). A manual trigger makes each deploy a deliberate act and
+    # records who started it. It is NOT a review: whoever can start the
+    # workflow can deploy, with no second person, and editing this condition
+    # removes it. See README -> Platform constraints.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    
-    # CRITICAL: Manual approval gate for prod
-    # Setup: GitHub Settings → Environments → Create "production" → Add reviewers
+
+    # Kept for the deployment history it records (Code -> Deployments: who,
+    # when, which commit), not for protection -- see above. The URL is the prod
+    # job, shown as "View deployment" on each deploy.
     environment:
       name: production
-      url: https://your-workspace.cloud.databricks.com
+      url: https://dbc-081a6a55-88cd.cloud.databricks.com/jobs/127108400184634
 
     # Prod deploys as the superstore-ci-prod service principal (OAuth M2M),
     # not a personal access token: a person's token carries all of that
