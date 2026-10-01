@@ -110,6 +110,13 @@ targets:
 
   prod:
     mode: production
+    # Prod jobs execute as the CI service principal, so every prod read and
+    # write is attributed to the pipeline rather than to a person. It is the
+    # same identity that deploys prod (deploy.yml), which is why no
+    # "Service Principal: User" role is needed: an identity may always run as
+    # itself. Its grants are in scripts/governance/.
+    run_as:
+      service_principal_name: 328034f8-49c9-4071-a093-bc4ac9466bc2
     workspace:
       # host: http://127.0.0.1:7073
       host: https://dbc-081a6a55-88cd.cloud.databricks.com

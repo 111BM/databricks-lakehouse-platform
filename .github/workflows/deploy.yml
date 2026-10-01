@@ -170,16 +170,34 @@ jobs:
     environment:
       name: production
       url: https://your-workspace.cloud.databricks.com
-    
+
+    # Prod deploys as the superstore-ci-prod service principal (OAuth M2M),
+    # not a personal access token: a person's token carries all of that
+    # person's rights (here, workspace admin) and stops working when they
+    # leave or it expires. The service principal holds only what the pipeline
+    # needs -- see scripts/governance/. dev and qa still deploy with the PAT:
+    # their bundle roots live under a user's home folder (`~/`), so switching
+    # identity there would duplicate their jobs rather than update them.
+    #
+    # DATABRICKS_TOKEN must NOT also be set here: with two auth methods in the
+    # environment the CLI refuses to pick one and fails.
     env:
       DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-    
+      DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Databricks CLI
         uses: databricks/setup-cli@main
+
+      # Proves in the log WHICH identity deployed -- a misconfigured secret
+      # would otherwise surface only as a confusing permission error later.
+      # Prints the application ID (an identifier), never the secret.
+      - name: Show deploying identity
+        run: |
+          databricks current-user me -o json | jq -r '"Deploying as: \(.userName) (\(.displayName))"'
 
       # Provide a pinned Terraform so `bundle deploy` uses it instead of doing its
       # own signed download, which can fail with "openpgp: key expired". 1.5.5 is
