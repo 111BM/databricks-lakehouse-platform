@@ -88,15 +88,15 @@ alert and folder the previous identity had created.
 
 ### 4. Grant it the data it reads and writes
 
-Recorded in [`scripts/governance/`](../scripts/governance/):
+Recorded in [`governance/manual_grants/`](../governance/manual_grants/):
 
-- [`prod_ci_service_principal_unity_catalog_grants.sql`](../scripts/governance/prod_ci_service_principal_unity_catalog_grants.sql)
+- [`prod_ci_service_principal_unity_catalog_grants.sql`](../governance/manual_grants/prod_ci_service_principal_unity_catalog_grants.sql)
   — `USE CATALOG`; `USE SCHEMA, SELECT, MODIFY, CREATE TABLE` on the nine prod
   schemas (plus `CREATE FUNCTION` on the semantic layer), matching
-  `writer_privileges` in `terraform/governance/model.tf`; read/write on the prod
+  `writer_privileges` in `governance/terraform/model.tf`; read/write on the prod
   landing volume; ownership of the three mart tables; and read-only `SELECT` on
   every prod schema for the human operator.
-- [`prod_ci_service_principal_workspace_permissions.sh`](../scripts/governance/prod_ci_service_principal_workspace_permissions.sh)
+- [`prod_ci_service_principal_workspace_permissions.sh`](../governance/manual_grants/prod_ci_service_principal_workspace_permissions.sh)
   — `READ` on the `superstore` secret scope (the GitHub source token) and
   `CAN_USE` on the SQL warehouse (the freshness alert). These are workspace
   objects, not Unity Catalog securables, so SQL cannot grant them.
@@ -184,8 +184,8 @@ service principal, which still lets the person manage them through `CAN_MANAGE`.
 |---|---|
 | Deploy identity | [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml), job `deploy-prod` |
 | Run-as identity, permissions | [`databricks.yml`](../databricks.yml), target `prod` |
-| Grants actually applied | [`scripts/governance/`](../scripts/governance/) |
-| Grants as intended (not yet applicable) | [`terraform/governance/model.tf`](../terraform/governance/model.tf), `writer_privileges` |
+| Grants actually applied | [`governance/manual_grants/`](../governance/manual_grants/) |
+| Grants as intended (not yet applicable) | [`governance/terraform/model.tf`](../governance/terraform/model.tf), `writer_privileges` |
 | Catalog / schema creation | `src/superstore_shared_utilities/superstore_catalog_and_schemas_init.ipynb` |
 
 ## What this does not cover

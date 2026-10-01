@@ -6,7 +6,7 @@ Nine domains × three environments = 27 schemas in one catalog, and until now ev
 of them was readable by exactly one identity: whoever ran the job. That is stable while
 the team is one person and fails in two directions the moment it is not.
 
-The model is declared in **[terraform/governance/model.tf](../terraform/governance/model.tf)**
+The model is declared in **[governance/terraform/model.tf](../governance/terraform/model.tf)**
 and applied with Terraform. Every privilege is granted on a **schema** — nothing in this
 model touches a table.
 
@@ -55,7 +55,7 @@ on a Friday afternoon.
 
 Catalog grants are therefore traversal only: `USE_CATALOG` for everyone, plus `BROWSE`
 for engineers. A `precondition` in
-**[terraform/governance/main.tf](../terraform/governance/main.tf)** fails the plan if
+**[governance/terraform/main.tf](../governance/terraform/main.tf)** fails the plan if
 anything else ever appears there.
 
 `BROWSE` is worth a sentence: it exposes the *metadata* — names, columns, comments — of
@@ -195,13 +195,13 @@ principal every time, and a permanently red workflow is one people stop reading 
 same argument as not alerting on `superseded > 0`. Grants to a missing principal fail at
 *apply*, not at plan, so the plan stays green and keeps its value meanwhile.
 
-So an apply is a person running `terraform apply` in `terraform/governance`. Even once
+So an apply is a person running `terraform apply` in `governance/terraform`. Even once
 that is automated, a branch-protection rule is what actually forces a reviewer, and that
 is repository settings rather than a file here.
 
 ## See also
 
-- **[terraform/governance/README.md](../terraform/governance/README.md)** — how to plan
+- **[governance/terraform/README.md](../governance/terraform/README.md)** — how to plan
   and apply, and what to check before you do
-- **[terraform/governance/model.tf](../terraform/governance/model.tf)** — the model, with
+- **[governance/terraform/model.tf](../governance/terraform/model.tf)** — the model, with
   the reasoning for each layer next to it

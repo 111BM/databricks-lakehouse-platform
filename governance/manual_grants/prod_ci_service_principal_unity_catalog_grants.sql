@@ -14,7 +14,7 @@
 -- Companion: prod_ci_service_principal_workspace_permissions.sh covers the two
 -- things SQL cannot grant: the secret scope and the SQL warehouse.
 --
--- WHY THIS IS A SCRIPT AND NOT TERRAFORM. terraform/governance/model.tf already
+-- WHY THIS IS A SCRIPT AND NOT TERRAFORM. governance/terraform/model.tf already
 -- declares these schema privileges as `writer_privileges`, waiting for
 -- var.pipeline_service_principal. It cannot be applied: the model also grants
 -- to three account groups, and account groups cannot exist on this workspace
@@ -100,7 +100,7 @@ ALTER TABLE superstore_catalog.prod_mart.mart_sales_daily         OWNER TO `3280
 --
 -- SELECT only, never MODIFY. Prod data now changes only through the pipeline,
 -- which is the point of moving it to a service principal. This matches the
--- Terraform model (terraform/governance/model.tf): engineers read every layer
+-- Terraform model (governance/terraform/model.tf): engineers read every layer
 -- and write only in dev.
 --
 -- Granted on SCHEMAS, like everything else here, so new tables are covered

@@ -175,7 +175,7 @@ jobs:
     # not a personal access token: a person's token carries all of that
     # person's rights (here, workspace admin) and stops working when they
     # leave or it expires. The service principal holds only what the pipeline
-    # needs -- see scripts/governance/. dev and qa still deploy with the PAT:
+    # needs -- see governance/manual_grants/. dev and qa still deploy with the PAT:
     # their bundle roots live under a user's home folder (`~/`), so switching
     # identity there would duplicate their jobs rather than update them.
     #

@@ -11,7 +11,7 @@ scratch/**
 **/explorations/**
 **/!explorations/README.md
 
-# Terraform (terraform/governance). The provider lock file IS committed, so that
+# Terraform (governance/terraform). The provider lock file IS committed, so that
 # a plan reviewed on a PR and the apply that follows it resolve the same provider.
 **/.terraform/
 *.tfstate

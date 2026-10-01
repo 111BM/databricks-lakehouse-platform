@@ -18,7 +18,7 @@
 # and keeps its value in the meantime.
 #
 # Applying is therefore a human running `terraform apply` in
-# terraform/governance, per its README. Restoring an apply job once the groups
+# governance/terraform, per its README. Restoring an apply job once the groups
 # exist is a dozen lines, gated on the existing `production` environment.
 #
 # TWO THINGS THIS DOES NOT GUARANTEE:
@@ -35,12 +35,12 @@ name: Unity Catalog governance
 on:
   pull_request:
     paths:
-      - "terraform/governance/**"
+      - "governance/terraform/**"
       - ".github/workflows/governance.yml"
 
 defaults:
   run:
-    working-directory: terraform/governance
+    working-directory: governance/terraform
 
 jobs:
   # --------------------------------------------------------------------------
