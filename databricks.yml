@@ -50,7 +50,7 @@ targets:
       # root_path: /Workspace/Users/bireshmoktan@gmail.com/superstore_dev_environment/.bundle/${bundle.name}/${bundle.target}
       root_path: ~/superstore_dev_environment/.bundle/${bundle.name}/${bundle.target}
       # root_path: ~/Workspace/Repos/superstore_dev_environment/.bundle/${bundle.name}/${bundle.target}
-      
+
     resources:
       alerts:
         superstore_freshness:
@@ -62,7 +62,7 @@ targets:
             pause_status: PAUSED
 
     presets:
-      source_linked_deployment: false   
+      source_linked_deployment: false
     variables:
       catalog: superstore_catalog
       schema: dev
@@ -96,7 +96,7 @@ targets:
             pause_status: PAUSED
 
     presets:
-      source_linked_deployment: false   
+      source_linked_deployment: false
     variables:
       catalog: superstore_catalog
       schema: qa
@@ -127,4 +127,10 @@ targets:
       SUPERSTORE_PIPELINE_VERSION: "1.0"
     permissions:
       - user_name: bireshmoktan@gmail.com
+        level: CAN_MANAGE
+
+      # superstore-ci-prod: the identity CI will deploy prod as (backlog item 1).
+      # Granted while deploys still run as the person above, so the first deploy
+      # AS the service principal can update the jobs, alert and folder it created.
+      - service_principal_name: 328034f8-49c9-4071-a093-bc4ac9466bc2
         level: CAN_MANAGE
