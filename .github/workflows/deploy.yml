@@ -88,6 +88,11 @@ jobs:
   deploy-dev:
     needs: unit-tests
     if: github.ref == 'refs/heads/dev'
+    # One deploy to dev at a time: a second waits in GitHub instead of
+    # failing on the bundle's deployment lock. See docs/CI_CONCURRENCY.md.
+    concurrency:
+      group: dev-environment
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -127,6 +132,13 @@ jobs:
   deploy-qa:
     needs: unit-tests
     if: github.ref == 'refs/heads/qa'
+    # SHARED with the integration test (integration-tests.yml): only one thing
+    # touches qa at a time, so a deploy can never replace qa's code while a
+    # test is running against it. The name must match there exactly -- a typo
+    # silently creates a second, independent group. See docs/CI_CONCURRENCY.md.
+    concurrency:
+      group: qa-environment
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -178,6 +190,11 @@ jobs:
     # workflow can deploy, with no second person, and editing this condition
     # removes it. See README -> Platform constraints.
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    # Two manual runs started close together deploy one after the other, never
+    # at once. See docs/CI_CONCURRENCY.md.
+    concurrency:
+      group: prod-environment
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 20
 

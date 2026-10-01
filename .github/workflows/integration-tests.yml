@@ -38,6 +38,21 @@ on:
 jobs:
   integration-tests:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    # SHARED with deploy-qa (deploy.yml): one thing touches qa at a time.
+    #
+    # Before this, overlapping work waited INSIDE Databricks, and two things
+    # went wrong on 2026-10-01 when two qa pushes landed 10 minutes apart:
+    #   - the second test queued behind the first (max_concurrent_runs: 1) and
+    #     its first task's 30-min timeout expired while it was still queued --
+    #     "timed out before the task was started" -- a false failure;
+    #   - the second push's deploy replaced qa's code while the first test was
+    #     running, so that test ran a mix of two commits.
+    # Waiting now happens here, in GitHub, where nothing times out, and each
+    # test runs against exactly one deployed commit. The group name must match
+    # deploy-qa exactly. See docs/CI_CONCURRENCY.md.
+    concurrency:
+      group: qa-environment
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 110  # Outermost of three nested timeouts -- see header.
     
