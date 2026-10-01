@@ -47,7 +47,7 @@ jobs:
   # Plan — runs on every PR that touches the model. Never changes anything.
   # --------------------------------------------------------------------------
   plan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     env:

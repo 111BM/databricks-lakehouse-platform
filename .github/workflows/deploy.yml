@@ -9,6 +9,15 @@
 #   - Code coverage tracking (portfolio value: quality metrics)
 #
 # Branch → Target:  dev → dev, qa → qa, main → prod
+#
+# Toolchain is pinned in every workflow, never floating:
+#   - runs-on: ubuntu-24.04, not ubuntu-latest, which moves to Ubuntu 26 on
+#     2026-10-19 and would change Java/Python under the unit tests unannounced.
+#   - databricks/setup-cli@v1.19.0, not @main. @main installed whatever CLI was
+#     newest on each run -- which is how CI silently moved to a CLI that wrote
+#     prod bundle state the local CLI could no longer read -- and ran unreviewed
+#     code in the job holding prod credentials. Keep the local CLI on the same
+#     version. Upgrade either deliberately, in one commit, after a dev/qa run.
 # ==============================================================================
 
 name: Superstore Data Platform CI/CD
@@ -26,7 +35,7 @@ jobs:
   # Blocks all deploys if tests fail. Coverage shows code quality trends.
   # --------------------------------------------------------------------------
   unit-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10  # Prevent hung tests from blocking deploys
     
     steps:
@@ -93,7 +102,7 @@ jobs:
     concurrency:
       group: dev-environment
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     env:
@@ -104,7 +113,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Databricks CLI
-        uses: databricks/setup-cli@main
+        uses: databricks/setup-cli@v1.19.0
 
       # Provide a pinned Terraform so `bundle deploy` uses it instead of doing its
       # own signed download, which can fail with "openpgp: key expired". 1.5.5 is
@@ -139,7 +148,7 @@ jobs:
     concurrency:
       group: qa-environment
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     env:
@@ -150,7 +159,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Databricks CLI
-        uses: databricks/setup-cli@main
+        uses: databricks/setup-cli@v1.19.0
 
       # Provide a pinned Terraform so `bundle deploy` uses it instead of doing its
       # own signed download, which can fail with "openpgp: key expired". 1.5.5 is
@@ -195,7 +204,7 @@ jobs:
     concurrency:
       group: prod-environment
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     # Kept for the deployment history it records (Code -> Deployments: who,
@@ -224,7 +233,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Databricks CLI
-        uses: databricks/setup-cli@main
+        uses: databricks/setup-cli@v1.19.0
 
       # Proves in the log WHICH identity deployed -- a misconfigured secret
       # would otherwise surface only as a confusing permission error later.
@@ -268,4 +277,4 @@ jobs:
         with:
           name: prod-deploy-record
           path: prod-deploy-record.txt
-          retention-days: 365
+          retention-days: 90  # repository maximum; it asked for 365 and GitHub silently used 90

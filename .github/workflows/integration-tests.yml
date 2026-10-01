@@ -53,7 +53,7 @@ jobs:
     concurrency:
       group: qa-environment
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 110  # Outermost of three nested timeouts -- see header.
     
     env:
@@ -66,7 +66,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
       
       - name: Install Databricks CLI
-        uses: databricks/setup-cli@main
+        uses: databricks/setup-cli@v1.19.0
       
       # Run integration tests (no retry - fail fast on real issues).
       # Judged on result_state, not the CLI exit code -- see header.
