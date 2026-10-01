@@ -118,7 +118,7 @@ jobs:
       # Provide a pinned Terraform so `bundle deploy` uses it instead of doing its
       # own signed download, which can fail with "openpgp: key expired". 1.5.5 is
       # the version the Databricks CLI expects, so there's no version mismatch.
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.5.5"
           terraform_wrapper: false
@@ -164,7 +164,7 @@ jobs:
       # Provide a pinned Terraform so `bundle deploy` uses it instead of doing its
       # own signed download, which can fail with "openpgp: key expired". 1.5.5 is
       # the version the Databricks CLI expects, so there's no version mismatch.
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.5.5"
           terraform_wrapper: false
@@ -245,7 +245,7 @@ jobs:
       # Provide a pinned Terraform so `bundle deploy` uses it instead of doing its
       # own signed download, which can fail with "openpgp: key expired". 1.5.5 is
       # the version the Databricks CLI expects, so there's no version mismatch.
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.5.5"
           terraform_wrapper: false
