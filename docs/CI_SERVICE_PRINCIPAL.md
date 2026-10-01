@@ -1,11 +1,9 @@
 # CI Service Principal — prod deployed and run by a pipeline identity, not a person
 
-> **Status (2026-10-01): complete for prod, one path not yet exercised.** Prod is
-> deployed by, runs as, and is owned by the service principal; the first run as
-> it succeeded (see [Verification](#verification)). Not yet exercised: its
-> **write** path into Silver and Gold — that run had no new source data, so no
-> MERGE executed. The first run after a new file lands in the prod source folder
-> is that test; record it here when it happens.
+> **Status (2026-10-01): complete and verified for prod.** Prod is deployed by,
+> runs as, and is owned by the service principal. Both a no-data run and a run
+> carrying 1,009,937 new rows succeeded as it, and the reconciliation balanced on
+> all four entities afterwards (see [Verification](#verification)).
 
 ## What
 
@@ -156,10 +154,23 @@ anonymously, announcing it only with a `print` the Jobs API never returns. With
 zero files to fetch, the anonymous path would have succeeded too. The audit log
 is the only place the difference is visible.
 
-**Not verified by this run:** the write path. Silver recorded
-`SKIPPED / NO_DATA` for all four entities, so no MERGE into Silver or Gold ran as
-the service principal. The grants for it are in place and match the Terraform
-model, but they are untested until a run carries new data.
+That run proved everything **except** the write path: Silver recorded
+`SKIPPED / NO_DATA` for all four entities, so no MERGE ran. The second run did.
+
+### Write path — run `206470662711806`, 2026-10-01, 9.3 min
+
+A new source file of **1,009,937 rows** was added to the prod source folder and
+the job run by hand. Every write below was made by the service principal.
+
+| Check | Result |
+|---|---|
+| Identity | `creator_user_name` = the service principal; 18/18 tasks SUCCESS, none retried |
+| Acquisition | `ACQUIRED 1 file(s) for env=prod` |
+| Bronze | 597 → 1,010,534 (+1,009,937, exactly the file) on the raw table and all four entity tables |
+| Silver MERGE | `SUCCESS / INCREMENTAL` on all four entities; for each, `good = duplicates + inserted + matched` exactly, and `inserted` equals the growth of the Silver table |
+| Gold | facts grew by exactly Silver's inserts (orders +841,442, sales +994,449); `dim_products` +51,522; `dim_customers` +87,426 — Silver's 86,943 new keys plus the SCD2 versions of changed ones |
+| Reconciliation | `bronze == silver + quarantine + audit + superseded` **balanced on all four entities**, via `superstore_reconciliation.reconciliation_sql` |
+| Referential completeness | 0 sales facts without a current product dimension |
 
 ## Rollback
 
