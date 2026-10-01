@@ -39,7 +39,7 @@ jobs:
     timeout-minutes: 10  # Prevent hung tests from blocking deploys
     
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       
       - uses: actions/setup-python@v5
         with:
@@ -110,7 +110,7 @@ jobs:
       DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Databricks CLI
         uses: databricks/setup-cli@v1.19.0
@@ -156,7 +156,7 @@ jobs:
       DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Databricks CLI
         uses: databricks/setup-cli@v1.19.0
@@ -230,7 +230,7 @@ jobs:
       DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Databricks CLI
         uses: databricks/setup-cli@v1.19.0
