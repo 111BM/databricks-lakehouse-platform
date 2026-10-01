@@ -72,7 +72,7 @@ jobs:
       
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results
           path: test-results.xml
@@ -80,7 +80,7 @@ jobs:
       
       # Upload coverage (shows team which code is tested)
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: coverage.xml
@@ -273,7 +273,7 @@ jobs:
       
       - name: Upload deploy record
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: prod-deploy-record
           path: prod-deploy-record.txt
