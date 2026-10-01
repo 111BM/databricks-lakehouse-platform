@@ -84,3 +84,36 @@ ALTER TABLE superstore_catalog.prod_mart.mart_sales_daily         OWNER TO `3280
 -- a service principal fails with PERMISSION_DENIED. Instead the views were
 -- dropped once at switch-over and recreated, and so owned, by the service
 -- principal's first run. Re-running this file never needs to touch them.
+
+
+-- -----------------------------------------------------------------------------
+-- 4. Read access for the human operator on every prod schema.
+--
+-- Ownership of prod objects is moving to the service principal: the three mart
+-- tables were transferred above, and anything the service principal creates
+-- (the recreated KPI views, any new table) is owned by it from the start.
+-- Owning the catalog and the schemas lets a person GRANT on the objects inside,
+-- but does NOT give them SELECT on objects someone else owns. Without this,
+-- the operator cannot read prod marts or views at all, which was discovered
+-- when counting the marts failed with INSUFFICIENT_PERMISSIONS right after
+-- the transfer.
+--
+-- SELECT only, never MODIFY. Prod data now changes only through the pipeline,
+-- which is the point of moving it to a service principal. This matches the
+-- Terraform model (terraform/governance/model.tf): engineers read every layer
+-- and write only in dev.
+--
+-- Granted on SCHEMAS, like everything else here, so new tables are covered
+-- automatically. Granted to the person directly only because account groups
+-- cannot exist on Free Edition; in the Terraform model this is the
+-- superstore_engineers group.
+-- -----------------------------------------------------------------------------
+GRANT SELECT ON SCHEMA superstore_catalog.prod_bronze         TO `bireshmoktan@gmail.com`;
+GRANT SELECT ON SCHEMA superstore_catalog.prod_silver         TO `bireshmoktan@gmail.com`;
+GRANT SELECT ON SCHEMA superstore_catalog.prod_gold           TO `bireshmoktan@gmail.com`;
+GRANT SELECT ON SCHEMA superstore_catalog.prod_quarantine     TO `bireshmoktan@gmail.com`;
+GRANT SELECT ON SCHEMA superstore_catalog.prod_audit          TO `bireshmoktan@gmail.com`;
+GRANT SELECT ON SCHEMA superstore_catalog.prod_metrics        TO `bireshmoktan@gmail.com`;
+GRANT SELECT ON SCHEMA superstore_catalog.prod_mart           TO `bireshmoktan@gmail.com`;
+GRANT SELECT ON SCHEMA superstore_catalog.prod_features       TO `bireshmoktan@gmail.com`;
+GRANT SELECT ON SCHEMA superstore_catalog.prod_semantic_layer TO `bireshmoktan@gmail.com`;

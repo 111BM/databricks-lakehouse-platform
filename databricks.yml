@@ -136,8 +136,10 @@ targets:
       - user_name: bireshmoktan@gmail.com
         level: CAN_MANAGE
 
-      # superstore-ci-prod: the identity CI will deploy prod as (backlog item 1).
-      # Granted while deploys still run as the person above, so the first deploy
-      # AS the service principal can update the jobs, alert and folder it created.
+      # superstore-ci-prod deploys prod (deploy.yml) and owns the prod jobs.
+      # Ownership was transferred to it once by a workspace admin: a bundle
+      # deploy cannot do that itself, because only admins may change a job's
+      # owner, and the service principal is deliberately not an admin.
+      # See docs/CI_SERVICE_PRINCIPAL.md.
       - service_principal_name: 328034f8-49c9-4071-a093-bc4ac9466bc2
         level: CAN_MANAGE
