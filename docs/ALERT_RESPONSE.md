@@ -9,6 +9,23 @@ operator. A page-the-secondary-after-15-minutes policy would be a fabricated art
 What survives that omission is the half that actually gets used even in large teams — what
 an alert means, what to check first, and what to do — so that is what this records.
 
+## Where alerts arrive
+
+| Source | Email (`bireshmoktan@gmail.com`) | Slack `#superstore-data-platform-alerts` |
+|---|---|---|
+| Pipeline job failure (any environment) | ✅ | ✅ — verified 2026-10-03, run `290632771048520` |
+| Integration suite failure | ✅ | ✅ — same destination; not yet exercised by a real failure |
+| Freshness alert (prod) | ✅ — verified 2026-08 | ✅ wired — not yet fired to Slack |
+
+Slack delivery goes through a Databricks **notification destination**
+(`superstore-data-platform-alerts`, ID `9da11076-679f-4b8b-b29b-c815842f4b35`), which
+holds the channel's webhook URL. The URL is a secret and lives only there; the bundle
+references the destination by ID. Email is kept as the fallback: if the Slack app is
+removed or its webhook revoked, failures still reach a person.
+
+A message in the channel names the job, the run and the failed task, with a link to the
+run. Start from the run page, then use the sections below.
+
 ---
 
 ## Before anything else: a green run is not evidence
@@ -154,8 +171,11 @@ changes.
 
 **Severity:** WARN, and it is about the alerting itself.
 
-No webhook secret is configured, so an alert fired and went nowhere. Set
-`superstore/slack_webhook_url` in the Databricks secret scope.
+No webhook secret is configured for `superstore_alerting`, so one of its data-quality
+alerts fired and went nowhere. Job failures and the freshness alert are unaffected — they
+reach Slack through the notification destination above, not this module. Set
+`superstore/slack_webhook_url` in the Databricks secret scope only if this module's route
+is kept.
 
 This is logged rather than silent on purpose: an unrouted workspace and a healthy one must
 not look identical.
