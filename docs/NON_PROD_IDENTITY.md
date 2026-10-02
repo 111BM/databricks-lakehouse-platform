@@ -176,7 +176,9 @@ risk ended when the token stopped working. On 2026-10-02:
 | Revoked every personal access token in the workspace | operator | `databricks tokens list` → **0 tokens** |
 | The old token is dead, not just unused | — | calling the API with the old `DEFAULT` profile → **`Invalid access token`** |
 | Removed the token profile from the developer's machine | operator | `~/.databrickscfg` holds **no `token =` line**; the OAuth profile was renamed `DEFAULT` and signed in again (OAuth logins are cached under the profile name), so plain `databricks` commands work without `--profile` |
-| CI still works with no personal token anywhere | CI | the push that recorded this ran qa's deploy and integration suite as `superstore-ci-qa` — see the commit that added this section |
+| CI still works with no personal token anywhere — **qa** | CI | qa deployed at 20:57:47, after revocation, and integration run `900516040616338` passed, started by `superstore-ci-qa` |
+| CI still works with no personal token anywhere — **prod** | CI | manual prod deploy #61 completed 2026-10-03 06:53:44, after revocation; the prod job still runs as `superstore-ci-prod` |
+| …and **dev** | developer | deployed from the developer's machine over OAuth |
 
 ## Verification
 
