@@ -146,15 +146,27 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
 
+    # qa deploys as its own service principal, superstore-ci-qa (OAuth M2M) --
+    # separate from prod's, and holding nothing in prod, so a leaked qa secret
+    # cannot reach prod data. DATABRICKS_TOKEN must NOT also be set: with two
+    # auth methods in the environment the CLI refuses to pick one.
+    # See docs/NON_PROD_IDENTITY.md.
     env:
       DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_QA_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_QA_CLIENT_SECRET }}
 
     steps:
       - uses: actions/checkout@v7
 
       - name: Install Databricks CLI
         uses: databricks/setup-cli@v1.19.0
+
+      # Proves in the log which identity deployed; prints the application ID
+      # (an identifier), never the secret.
+      - name: Show deploying identity
+        run: |
+          databricks current-user me -o json | jq -r '"Deploying as: \(.userName) (\(.displayName))"'
 
       # Provide a pinned Terraform so `bundle deploy` uses it instead of doing its
       # own signed download, which can fail with "openpgp: key expired". 1.5.5 is

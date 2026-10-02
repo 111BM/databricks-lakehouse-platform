@@ -57,8 +57,11 @@ jobs:
     timeout-minutes: 110  # Outermost of three nested timeouts -- see header.
     
     env:
+      # Same identity that deploys qa (superstore-ci-qa), so the suite is started
+      # by, and its jobs run as, the qa service principal -- not a person.
       DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_QA_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_QA_CLIENT_SECRET }}
     
     steps:
       - uses: actions/checkout@v7
