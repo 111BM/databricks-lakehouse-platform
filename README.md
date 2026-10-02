@@ -177,7 +177,7 @@ databricks bundle run superstore_integration_test --target qa
 ## CI/CD
 
 ```
-push to dev  ──► unit tests ──► deploy to dev
+push to dev  ──► unit tests   (dev is deployed by the developer: databricks bundle deploy -t dev)
 push to qa   ──► unit tests ──► deploy to qa ──► integration test (auto)
 push to main ──► unit tests   (prod NOT deployed)
 Run workflow (main, by hand) ──► unit tests ──► deploy to prod
@@ -356,7 +356,7 @@ account groups, and only its application is blocked.
 
 Gaps I'm aware of and would close before running this at real scale — kept here deliberately, because knowing them is part of the engineering. Items resolved during development are recorded above rather than deleted.
 
-1. **Service principal for CI** — **done for prod (2026-10-01).** Prod is deployed by, runs as, and is owned by `superstore-ci-prod` over OAuth M2M; the first run as it went 18/18 green, and the audit log confirms it read the source token from the secret rather than silently falling back to anonymous. Its write path is verified too: a run carrying 1,009,937 new rows MERGEd through Silver and Gold as the service principal, and the reconciliation balanced on all four entities afterwards. What remains: **dev, qa and the integration and governance workflows** still use the personal token: dev and qa bundle roots live under a user's home folder (`~/`), so switching their identity would duplicate their jobs rather than update them. The workspace is Databricks Free Edition, which shaped the result: no account groups (so grants are a script, not the Terraform model), no OIDC federation (so a stored OAuth secret), and no way for a non-admin to give a view to a service principal (so the KPI views were recreated by it instead). See **[docs/CI_SERVICE_PRINCIPAL.md](docs/CI_SERVICE_PRINCIPAL.md)**.
+1. **Service principal for CI** — **done for prod (2026-10-01).** Prod is deployed by, runs as, and is owned by `superstore-ci-prod` over OAuth M2M; the first run as it went 18/18 green, and the audit log confirms it read the source token from the secret rather than silently falling back to anonymous. Its write path is verified too: a run carrying 1,009,937 new rows MERGEd through Silver and Gold as the service principal, and the reconciliation balanced on all four entities afterwards. **qa followed on 2026-10-02** on its own service principal, `superstore-ci-qa`, holding nothing in prod — its existing jobs moved with `bundle deployment bind`, keeping their IDs and run history — and **dev is now deployed by the developer under OAuth**, not by CI ([docs/NON_PROD_IDENTITY.md](docs/NON_PROD_IDENTITY.md)). What remains: the **governance workflow** still uses the personal token, so it cannot be revoked yet. The workspace is Databricks Free Edition, which shaped the result: no account groups (so grants are a script, not the Terraform model), no OIDC federation (so a stored OAuth secret), and no way for a non-admin to give a view to a service principal (so the KPI views were recreated by it instead). See **[docs/CI_SERVICE_PRINCIPAL.md](docs/CI_SERVICE_PRINCIPAL.md)**.
 
 2. **Environment pinning** — all 18 tasks are pinned to a single serverless environment (`superstore_serverless_environment`, version 5). The remaining gap is a policy for *when* to bump it: pinning is only useful if it is total, and a partial pin is worse than none, because it converts a visible platform upgrade into an invisible divergence between tasks in the same run.
 

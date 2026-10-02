@@ -14,7 +14,7 @@ inside Databricks.
 
 | Group | Jobs in it | Effect |
 |---|---|---|
-| `dev-environment` | `deploy-dev` | one dev deploy at a time |
+| ~~`dev-environment`~~ | ~~`deploy-dev`~~ | removed 2026-10-02 with the job itself: CI no longer deploys dev (see [NON_PROD_IDENTITY.md](NON_PROD_IDENTITY.md)) |
 | **`qa-environment`** | `deploy-qa` **and** `integration-tests` | a qa deploy and a qa test never overlap |
 | `prod-environment` | `deploy-prod` | two manual prod runs deploy one after the other |
 
@@ -62,7 +62,7 @@ the timeout only made it visible.
 
 | File | What changed |
 |---|---|
-| [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) | `concurrency` on `deploy-dev`, `deploy-qa`, `deploy-prod` |
+| [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) | `concurrency` on `deploy-qa`, `deploy-prod` (and on `deploy-dev` until that job was removed) |
 | [`.github/workflows/integration-tests.yml`](../.github/workflows/integration-tests.yml) | `concurrency` on `integration-tests`, same group as `deploy-qa` |
 
 GitHub concurrency groups are **repository-wide**: the same group name in two

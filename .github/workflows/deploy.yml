@@ -87,48 +87,18 @@ jobs:
           retention-days: 90
 
   # --------------------------------------------------------------------------
-  # Job 2a: Deploy to Dev (Auto, on push to dev)
-  # --------------------------------------------------------------------------
-  deploy-dev:
-    needs: unit-tests
-    if: github.ref == 'refs/heads/dev'
-    # One deploy to dev at a time: a second waits in GitHub instead of
-    # failing on the bundle's deployment lock. See docs/CI_CONCURRENCY.md.
-    concurrency:
-      group: dev-environment
-      cancel-in-progress: false
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-
-    env:
-      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Databricks CLI
-        uses: databricks/setup-cli@v1.19.0
-
-      # Provide a pinned Terraform so `bundle deploy` uses it instead of doing its
-      # own signed download, which can fail with "openpgp: key expired". 1.5.5 is
-      # the version the Databricks CLI expects, so there's no version mismatch.
-      - uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: "1.5.5"
-          terraform_wrapper: false
-
-      - name: Point Databricks CLI at Terraform
-        run: |
-          echo "DATABRICKS_TF_EXEC_PATH=$(which terraform)" >> "$GITHUB_ENV"
-          echo "DATABRICKS_TF_VERSION=1.5.5" >> "$GITHUB_ENV"
-
-      # CRITICAL: Validate before deploy (catches YAML errors, missing vars)
-      - name: Validate bundle (dev)
-        run: databricks bundle validate --target dev
-
-      - name: Deploy to dev
-        run: databricks bundle deploy --target dev
+  # dev is NOT deployed by CI.
+  #
+  # dev is a personal environment (mode: development, under the developer's own
+  # home folder), so it is deployed by the developer, from their own machine,
+  # under their own OAuth login -- `databricks bundle deploy -t dev`. A push to
+  # dev runs the unit tests and stops.
+  #
+  # This job used to deploy dev with a personal access token stored in GitHub.
+  # That token carried the developer's full rights -- workspace admin, so prod
+  # too -- and it was the last thing in CI that needed one. The usual pattern:
+  # people deploy their own dev under their own login; CI holds only non-human,
+  # per-environment identities. See docs/NON_PROD_IDENTITY.md.
 
   # --------------------------------------------------------------------------
   # Job 2b: Deploy to QA (Auto, on push to qa)
