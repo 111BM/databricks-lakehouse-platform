@@ -190,11 +190,10 @@ service principal, which still lets the person manage them through `CAN_MANAGE`.
 
 ## What this does not cover
 
-- **dev and qa still use the personal token.** Their bundle roots are `~/…`, a
-  user's home folder; deploying them as another identity resolves `~` elsewhere
-  and creates duplicate jobs instead of updating the existing ones. Moving them
-  needs a shared root path and a state migration first.
-- **The integration and governance workflows** still authenticate with the token.
+- **dev and qa** were moved off the personal token on 2026-10-02 — qa to its own
+  service principal (via a shared root path and `bundle deployment bind`), dev to the
+  developer's own OAuth login — and the token was then revoked. See
+  [NON_PROD_IDENTITY.md](NON_PROD_IDENTITY.md).
 - **The secret is long-lived.** 365 days, rotated by hand. GitHub OIDC federation
   would remove it entirely, but needs account-level APIs Free Edition does not
   have.

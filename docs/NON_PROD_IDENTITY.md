@@ -3,8 +3,8 @@
 > **Status (2026-10-02): qa and dev done and verified.** qa deploys and runs as
 > its own service principal; dev is deployed by the developer under OAuth, and CI
 > no longer deploys it, and the governance workflow runs with no credentials.
-> **No workflow uses the personal access token any more.** Not done yet: revoking
-> it — see [What this does not cover](#what-this-does-not-cover).
+> **No workflow uses a personal access token, and every one has been revoked**
+> (2026-10-02) — see [Revocation](#revocation).
 
 ## What
 
@@ -161,8 +161,22 @@ access to any existing one, so prod schemas stay unreachable.
 | Integration schemas | dropped and recreated each run, grants lost | emptied each run, **grants kept** |
 | Reset on failure | printed "(ok)", carried on | raises |
 | dev deployed by | CI with the personal token, on every push | the developer, OAuth, on demand |
-| Developer's own CLI login | personal token in `~/.databrickscfg` | OAuth, tokens in the OS keychain (the old token profile still exists until revoked) |
+| Developer's own CLI login | personal token in `~/.databrickscfg` | OAuth, tokens in the OS keychain; no `token =` line left |
 | Personal token in CI | 4 jobs | **none** |
+| Personal tokens in the workspace | at least one, admin, never expiring | **none — all revoked** |
+
+## Revocation
+
+Moving every workflow off the personal token only stopped *depending* on it. The
+risk ended when the token stopped working. On 2026-10-02:
+
+| Step | Who | Verified by |
+|---|---|---|
+| Deleted `DATABRICKS_TOKEN` from GitHub's repository secrets | operator | not visible without `gh`; no workflow references it, so a leftover copy could not be used by CI either |
+| Revoked every personal access token in the workspace | operator | `databricks tokens list` → **0 tokens** |
+| The old token is dead, not just unused | — | calling the API with the old `DEFAULT` profile → **`Invalid access token`** |
+| Removed the token profile from the developer's machine | operator | `~/.databrickscfg` holds **no `token =` line**; the OAuth profile was renamed `DEFAULT` and signed in again (OAuth logins are cached under the profile name), so plain `databricks` commands work without `--profile` |
+| CI still works with no personal token anywhere | CI | the push that recorded this ran qa's deploy and integration suite as `superstore-ci-qa` — see the commit that added this section |
 
 ## Verification
 
@@ -180,9 +194,6 @@ access to any existing one, so prod schemas stay unreachable.
 - **The governance workflow has no live `plan` in CI** (decision 7). The
   credential-free checks catch policy violations; what is lost is the diff against
   the real workspace on a pull request, which a person now produces locally.
-- **No token is revoked yet**: neither the one in GitHub nor the old `DEFAULT`
-  profile on the developer's machine. Revoking both is the step that actually
-  removes the risk; everything above only stops depending on them.
 - **The dev copy of the integration suite** shares the `integration_test_*` schemas,
   now owned by the qa service principal. Run as the developer, its reset would fail
   — loudly now — on tables it does not own. Accepted: the suite is run through qa.
