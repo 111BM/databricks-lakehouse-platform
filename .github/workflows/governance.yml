@@ -1,5 +1,5 @@
 # ==============================================================================
-# Unity Catalog governance — plan and test on PR. Apply is manual.
+# Unity Catalog governance — check and test on PR, with no credentials.
 # ==============================================================================
 # Deliberately separate from the bundle deploy workflow, and deliberately NOT on
 # a schedule. Permissions change a few times a year; data moves every day. Giving
@@ -7,8 +7,20 @@
 # docs/UNITY_CATALOG_GRANTS.md ("Why this is Terraform, and not a task in the
 # pipeline").
 #
-# The review artifact is the point: a pull request shows exactly which grants
-# would be added and removed, before anyone is affected.
+# This workflow holds NO Databricks credential. It checks formatting, validates
+# the configuration and runs the model tests -- all against a mocked provider,
+# so the three policy preconditions are still enforced on every PR (each test
+# runs a plan, and a plan evaluates them). `terraform plan` against the real
+# workspace is run locally, by a person, under their own OAuth login.
+#
+# Why no live plan in CI (decided 2026-10-02): reading every principal's grants
+# needs owner-or-MANAGE-level rights -- effectively the power to grant access --
+# and a lesser identity sees only its own grants, so its plan would be
+# misleading. Giving a CI identity that power, to plan a model that cannot be
+# applied on Free Edition, was more risk than value; it was also the last thing
+# in CI using a personal access token. The mature target is a dedicated
+# governance identity (OIDC, no stored secret) that plans on PRs and applies on
+# merge. See docs/NON_PROD_IDENTITY.md.
 #
 # THERE IS NO APPLY JOB, and that is a decision rather than an omission. The
 # account groups the model grants to do not exist in this account, so an
@@ -21,13 +33,8 @@
 # governance/terraform, per its README. Restoring an apply job once the groups
 # exist is a dozen lines, gated on the existing `production` environment.
 #
-# TWO THINGS THIS DOES NOT GUARANTEE:
-#   - Branch protection is what actually forces a reviewer. That is repository
-#     settings, not a file here.
-#   - With no remote state configured (versions.tf), each CI run starts stateless,
-#     so a plan reports every grant as a create and removals of whole schemas
-#     from the model are invisible. Configure the backend before relying on a
-#     plan to show access being taken AWAY.
+# THIS DOES NOT GUARANTEE that a reviewer looks: branch protection does that,
+# and it is repository settings, not a file here.
 # ==============================================================================
 
 name: Unity Catalog governance
@@ -44,15 +51,12 @@ defaults:
 
 jobs:
   # --------------------------------------------------------------------------
-  # Plan — runs on every PR that touches the model. Never changes anything.
+  # Check — runs on every PR that touches the model. No credentials, never
+  # contacts Databricks, never changes anything.
   # --------------------------------------------------------------------------
-  plan:
+  check:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-
-    env:
-      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
 
     steps:
       - uses: actions/checkout@v7
@@ -78,23 +82,3 @@ jobs:
       # anything passes all three of them.
       - name: Test the model
         run: terraform test
-
-      # The plan carries the three policy preconditions with it: a model that
-      # grants SELECT at catalog level, or SELECT without USE_SCHEMA, or a
-      # consumer role on a raw layer, fails at this step.
-      - name: Plan
-        id: plan
-        run: terraform plan -input=false -no-color -out=tfplan
-
-      # Put the diff in the job summary so a reviewer reads permissions changing
-      # without opening logs.
-      - name: Publish plan to job summary
-        if: always()
-        run: |
-          {
-            echo "## Unity Catalog grant plan"
-            echo ""
-            echo '```terraform'
-            terraform show -no-color tfplan || echo "plan unavailable — see the Plan step"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"

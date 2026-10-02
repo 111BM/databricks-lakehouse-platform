@@ -2,9 +2,9 @@
 
 > **Status (2026-10-02): qa and dev done and verified.** qa deploys and runs as
 > its own service principal; dev is deployed by the developer under OAuth, and CI
-> no longer deploys it. **Not done yet:** the governance workflow still uses the
-> personal access token, so the token cannot be revoked until that is decided —
-> see [What this does not cover](#what-this-does-not-cover).
+> no longer deploys it, and the governance workflow runs with no credentials.
+> **No workflow uses the personal access token any more.** Not done yet: revoking
+> it — see [What this does not cover](#what-this-does-not-cover).
 
 ## What
 
@@ -81,6 +81,18 @@ each test.
 | A separate catalog for test environments, with catalog-level read access | Unity Catalog's recommended layout, and the better long-term shape — but it means migrating every table reference in the platform |
 | The pipeline grants access on schemas it creates | Rejected: the identity that runs code should not also control access — the principle the governance design rests on |
 
+### 7. Governance: credential-free checks in CI, `plan` run locally
+
+| Option | Verdict |
+|---|---|
+| **CI keeps `fmt`, `validate`, `terraform test`; a person runs `plan` locally** | **Chosen.** No Databricks credential in the workflow at all, and nothing lost on policy: the tests mock the provider, each runs a plan, and a plan evaluates the three preconditions that block over-sharing |
+| A read-only governance service principal running `plan` in CI | Rejected for now. Reading **every** principal's grants needs owner-or-`MANAGE`-level rights — effectively the power to grant access — and anything less sees only its own grants, giving a misleading diff. That is real power in CI to plan a model that cannot be applied on Free Edition |
+
+The mature target, deferred rather than dismissed: a dedicated governance identity
+(OIDC, no stored secret) that **plans on every pull request and applies on merge** —
+"GitOps for permissions". It becomes worth it once account groups exist and apply is
+possible.
+
 ## How it was done
 
 The order mattered; each step makes the next possible.
@@ -99,6 +111,7 @@ The order mattered; each step makes the next possible.
 | 10 | code | Reset changed to empty the schemas rather than drop them |
 | 11 | operator | `databricks auth login --profile oauth`; tokens held in the macOS keychain, none in `~/.databrickscfg` |
 | 12 | CI | `deploy-dev` removed; a push to `dev` runs the unit tests only |
+| 13 | CI | `governance.yml`: live `plan` and its credentials removed; `fmt`, `validate` and `terraform test` run with **no Databricks credential** — reproduced locally with every `DATABRICKS_*` variable unset, 7/7 tests passing |
 
 **Why `CREATE SCHEMA` — the one privilege prod's service principal lacks:** a schema
 can only be dropped or recreated by its owner, and the integration suite's schemas
@@ -149,7 +162,7 @@ access to any existing one, so prod schemas stay unreachable.
 | Reset on failure | printed "(ok)", carried on | raises |
 | dev deployed by | CI with the personal token, on every push | the developer, OAuth, on demand |
 | Developer's own CLI login | personal token in `~/.databrickscfg` | OAuth, tokens in the OS keychain (the old token profile still exists until revoked) |
-| Personal token in CI | 4 jobs | **1 workflow** (governance) |
+| Personal token in CI | 4 jobs | **none** |
 
 ## Verification
 
@@ -164,9 +177,9 @@ access to any existing one, so prod schemas stay unreachable.
 
 ## What this does not cover
 
-- **The governance workflow still uses the personal token.** It runs `terraform
-  plan` on pull requests. Until it is moved — to local-only `plan`, or to its own
-  read-only service principal — `DATABRICKS_TOKEN` cannot be deleted from GitHub.
+- **The governance workflow has no live `plan` in CI** (decision 7). The
+  credential-free checks catch policy violations; what is lost is the diff against
+  the real workspace on a pull request, which a person now produces locally.
 - **No token is revoked yet**: neither the one in GitHub nor the old `DEFAULT`
   profile on the developer's machine. Revoking both is the step that actually
   removes the risk; everything above only stops depending on them.

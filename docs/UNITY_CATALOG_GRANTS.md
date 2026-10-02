@@ -188,12 +188,16 @@ pipeline still runs as a person who owns these schemas and therefore needs no gr
 is setting one variable, not designing anything.
 
 **Applying is manual, and CI does not enforce the review gate.**
-`.github/workflows/governance.yml` runs `fmt`, `validate`, `terraform test` and `plan` on
-pull requests that touch the model, and stops there. There is deliberately no apply job:
+`.github/workflows/governance.yml` runs `fmt`, `validate` and `terraform test` on pull
+requests that touch the model, with no Databricks credential at all — the tests mock the
+provider, and each runs a plan, so the preconditions are still enforced. Since 2026-10-02
+it no longer runs a live `plan`: reading every principal's grants needs owner-or-`MANAGE`
+rights, which no CI identity should hold for a model that cannot be applied here. A person
+runs `terraform plan` locally, under their own login. There is deliberately no apply job:
 the account groups do not exist, so an automated apply on merge would fail on an unknown
 principal every time, and a permanently red workflow is one people stop reading — the
 same argument as not alerting on `superseded > 0`. Grants to a missing principal fail at
-*apply*, not at plan, so the plan stays green and keeps its value meanwhile.
+*apply*, not at plan, so a local plan stays useful meanwhile.
 
 So an apply is a person running `terraform apply` in `governance/terraform`. Even once
 that is automated, a branch-protection rule is what actually forces a reviewer, and that

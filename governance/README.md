@@ -9,7 +9,7 @@ There are two halves, and they are **not** equal:
 
 | Folder | What it is | Status |
 |---|---|---|
-| [`terraform/`](terraform/) | The **intended** permission model: per-layer grants for analysts, data scientists and engineers, plus the pipeline's writer privileges. Declarative, tested with `terraform test`, planned on every pull request | **Unapplied.** It grants to account groups, which cannot exist on Databricks Free Edition (no account console, no SCIM) |
+| [`terraform/`](terraform/) | The **intended** permission model: per-layer grants for analysts, data scientists and engineers, plus the pipeline's writer privileges. Declarative, checked and tested on every pull request with no credentials, planned locally by a person | **Unapplied.** It grants to account groups, which cannot exist on Databricks Free Edition (no account console, no SCIM) |
 | [`manual_grants/`](manual_grants/) | The grants **actually applied** for the prod CI service principal (`superstore-ci-prod`), plus the operator's read-only access | **Applied 2026-10-01.** Safe to re-run |
 
 `manual_grants/` is a stand-in, not a second source of truth. Its schema
