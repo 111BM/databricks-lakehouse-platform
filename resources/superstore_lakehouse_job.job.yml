@@ -427,4 +427,13 @@ resources:
           - bireshmoktan@gmail.com
         no_alert_for_skipped_runs: true
 
+      # Failures also post to the Slack channel #superstore-data-platform-alerts,
+      # through a Databricks notification destination. The ID is not a secret;
+      # the Slack webhook URL behind it lives only inside Databricks, never here.
+      # Email stays as the fallback if the Slack side ever breaks.
+      # See docs/ALERT_RESPONSE.md.
+      webhook_notifications:
+        on_failure:
+          - id: 9da11076-679f-4b8b-b29b-c815842f4b35   # superstore-data-platform-alerts
+
       performance_target: PERFORMANCE_OPTIMIZED

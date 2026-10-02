@@ -97,6 +97,10 @@ resources:
           retrigger_seconds: 86400
           subscriptions:
             - user_email: bireshmoktan@gmail.com
+            # The Slack channel #superstore-data-platform-alerts, via a
+            # Databricks notification destination (ID only; the webhook URL
+            # stays inside Databricks). Email remains as the fallback.
+            - destination_id: 9da11076-679f-4b8b-b29b-c815842f4b35
 
       # Checked daily at 08:00, ~2 hours after the Sunday 06:00 run. Daily
       # rather than weekly so a missed run is caught within a day rather than
