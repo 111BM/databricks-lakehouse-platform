@@ -2,8 +2,19 @@
 # MAGIC %md
 # MAGIC # Integration Test — environment reset
 # MAGIC
-# MAGIC Drops the isolated `integration_test_*` schemas and removes the test
+# MAGIC Empties the isolated `integration_test_*` schemas and removes the test
 # MAGIC volume so each run starts clean.
+# MAGIC
+# MAGIC It drops the **tables and views inside** the schemas, not the schemas
+# MAGIC themselves. Dropping the schemas also destroyed every grant on them, so
+# MAGIC read access for a person had to be re-granted after every run. Schemas
+# MAGIC are long-lived containers that hold grants; tables are what tests create
+# MAGIC and destroy.
+# MAGIC
+# MAGIC Every failure **raises**. This used to print "(ok) could not drop ..."
+# MAGIC and carry on, so a reset that could not clean up -- after an ownership
+# MAGIC change, say -- would have let the suite run against the previous run's
+# MAGIC tables and pass for the wrong reason.
 # MAGIC
 # MAGIC Wired as `reset_environment`, the FIRST task in the suite — not the
 # MAGIC last. There is no end-of-run cleanup: enforcing isolation at the start
@@ -46,22 +57,44 @@ VOLUME_BASE = "/Volumes/workspace/default/my_filestore_integration_test/"
 
 # COMMAND ----------
 
+dropped = 0
 for s in SCHEMAS:
     schema = f"{CATALOG}.{ENV}_{s}"
-    try:
-        spark.sql(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
-        print(f"dropped {schema}")
-    except Exception as e:
-        print(f"(ok) could not drop {schema}: {e}")
+
+    # A missing schema is fine: first run ever, or after a manual drop. The
+    # pipeline's init task creates it.
+    if not spark.catalog.databaseExists(schema):
+        print(f"{schema}: absent, nothing to empty")
+        continue
+
+    # Views first: a view can depend on a table in the same schema.
+    # isTemporary: session temp views are listed too, but are not in the schema.
+    objects = [o for o in spark.catalog.listTables(schema) if not o.isTemporary]
+    for obj in sorted(objects, key=lambda o: o.tableType != "VIEW"):
+        kind = "VIEW" if obj.tableType == "VIEW" else "TABLE"
+        spark.sql(f"DROP {kind} IF EXISTS {schema}.`{obj.name}`")   # raises on failure
+        dropped += 1
+
+    # Prove it, rather than trust the loop: any object type the loop does not
+    # know about would otherwise survive and leak into the next run.
+    left = [o.name for o in spark.catalog.listTables(schema) if not o.isTemporary]
+    if left:
+        raise RuntimeError(f"{schema} is not empty after reset: {left}")
+    print(f"{schema}: emptied ({len(objects)} objects)")
 
 # COMMAND ----------
 
+# The whole volume tree: raw seed files, Auto Loader schema and checkpoint
+# state. An absent path is fine; any other failure stops the suite.
 try:
     dbutils.fs.rm(VOLUME_BASE, recurse=True)
-    print(f"removed volume {VOLUME_BASE}")
+    print(f"removed volume contents {VOLUME_BASE}")
 except Exception as e:
-    print(f"(ok) could not remove {VOLUME_BASE}: {e}")
+    if "FileNotFoundException" not in str(e) and "does not exist" not in str(e).lower():
+        raise
 
 # COMMAND ----------
 
-dbutils.notebook.exit("CLEANUP_DONE")
+# The exit string is the only thing the Jobs API returns for a notebook task,
+# so the count goes there rather than only in print output.
+dbutils.notebook.exit(f"CLEANUP_DONE objects_dropped={dropped}")
