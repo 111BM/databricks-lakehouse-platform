@@ -85,11 +85,6 @@ jobs:
           name: coverage-report
           path: coverage.xml
           retention-days: 90
-      
-      # Optional: Push to Codecov for visualization
-      # - uses: codecov/codecov-action@v3
-      #   with:
-      #     file: ./coverage.xml
 
   # --------------------------------------------------------------------------
   # Job 2a: Deploy to Dev (Auto, on push to dev)
