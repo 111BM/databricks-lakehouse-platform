@@ -1,9 +1,9 @@
 # CI Concurrency — one thing touches an environment at a time
 
-> **Status (2026-10-02): in place, not yet exercised by an overlap.** The groups
-> are configured and validated, and normal single pushes run through them. The
-> waiting behaviour itself only shows when two pushes overlap; see
-> [Verification](#verification).
+> **Status (2026-10-02): in place and verified on a real overlap.** Two pushes
+> landed on `qa` while an integration test was running; the qa deploy waited in
+> GitHub until the test finished, and the two pushes collapsed into one deploy of
+> the newer commit. See [Verification](#verification).
 
 ## What
 
@@ -141,11 +141,31 @@ Done:
   exactly the two qa jobs; nothing has `cancel-in-progress: true`
 - normal single pushes run through the groups
 
-**Not yet done:** an actual overlap. A single push never waits, so the waiting
-behaviour has not been observed. The test: push twice to `qa` a few minutes apart
-and confirm GitHub shows the second deploy *"Waiting for a pending job in the
-qa-environment concurrency group"*, then that both tests pass in sequence. Record
-the run IDs here when that is done.
+**Real overlap, 2026-10-02.** Two commits were pushed to `qa` while integration
+test `245142866425796` was running against an earlier one:
+
+| Time | Event |
+|---|---|
+| 09:36:16 | integration test `245142866425796` starts |
+| **09:44:02** | push to `qa` (`ef6231e`, toolchain pinning) |
+| **10:04:32** | push to `qa` (`f0242d6`, action upgrades) |
+| **10:16:20** | the running test finishes — SUCCESS |
+| **10:16:51** | **qa redeploys, 31 s later** — the first qa deploy since 09:36:00 |
+| 10:17:07 | integration test `551573030909467` starts; Databricks queue time **0.3 s** |
+
+What it shows:
+
+- **The deploy waited ~32 minutes in GitHub** and never ran under the live test —
+  before, it would have landed about two minutes after the 09:44 push, mid-test.
+- **Nothing waited inside Databricks** (0.3 s queued), so no task timeout was
+  counting; the day before, the same kind of wait was 30 minutes and ended in a
+  false failure.
+- **The two pushes collapsed into one deploy** of the newer commit, the documented
+  behaviour for three or more pending items: the first push's deploy was replaced
+  while waiting, and `f0242d6` — which contains it — was deployed and tested.
+
+Evidence comes from Databricks, not GitHub's UI: qa's bundle `deployment.json`
+modification time, and the integration runs' start, end and queue times.
 
 ## Process change that came with it
 
