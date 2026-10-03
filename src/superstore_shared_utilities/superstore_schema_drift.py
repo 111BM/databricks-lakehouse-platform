@@ -319,7 +319,7 @@ def record_schema_drift(
     Detect drift against the live raw table and record it.
 
     Impure half of this module, matching the `reconciliation_sql` /
-    `log_reconciliation` split used elsewhere: the comparison is pure and
+    `run_reconciliation_checks` split used elsewhere: the comparison is pure and
     unit-tested, this executes it.
 
     Deliberately does NOT change behaviour. An undeclared column is still

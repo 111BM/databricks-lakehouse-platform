@@ -16,6 +16,15 @@ an alert means, what to check first, and what to do — so that is what this rec
 | Pipeline job failure (any environment) | ✅ | ✅ — verified 2026-10-03, run `290632771048520` |
 | Integration suite failure | ✅ | ✅ — same destination; not yet exercised by a real failure |
 | Freshness alert (prod) | ✅ — verified 2026-08 | ✅ wired — not yet fired to Slack |
+| Data quality: reconciliation unbalanced (prod) | ✅ | ✅ |
+| Data quality: orphaned facts (prod) | ✅ | ✅ |
+| Data quality: schema drift (prod) | ✅ | ✅ |
+| Data quality: placeholder exposure growing (prod) | ✅ | ✅ |
+
+Data-quality delivery was verified on 2026-10-03 by evaluating the paused qa copy of the
+reconciliation alert by hand: it went to ERROR (its table does not exist in qa) and
+notified email and Slack, with no failed destinations. The prod copies evaluated OK the
+same day. See **[DATA_QUALITY_ALERTS.md](DATA_QUALITY_ALERTS.md)**.
 
 Slack delivery goes through a Databricks **notification destination**
 (`superstore-data-platform-alerts`, ID `9da11076-679f-4b8b-b29b-c815842f4b35`), which
@@ -54,14 +63,23 @@ should send you looking for a defect:
 | Measurement | Why it is fine |
 |---|---|
 | `superseded_rows > 0` | Normal under incremental loading. Silver keeps one row per key, Bronze one per arrival; a key arriving again in a later run supersedes the earlier version. Goes to 0 after a replay. See **[RECONCILIATION_INVARIANT.md](RECONCILIATION_INVARIANT.md)** |
-| placeholder rows > 0 | Normal for an entity with genuinely no better value anywhere. Watch the **trend**, not the number. See **[SEVERITY_TIERS.md](SEVERITY_TIERS.md)** |
+| placeholder rows > 0 | Normal for an entity with genuinely no better value anywhere. The **level** is not alerted on; **growth** of more than 5 points between runs is (below). See **[SEVERITY_TIERS.md](SEVERITY_TIERS.md)** |
 
 Alerting on either would produce a permanently red channel, and a permanently red channel
 is a muted one — after which the real alert is invisible too.
 
 ---
 
-## Alert: Reconciliation failed for `<entity>`
+## Alert: `[prod] Data quality: reconciliation unbalanced`
+
+*(Formerly logged as "Reconciliation failed for `<entity>`".)* First query — which entity, and by how much:
+
+```sql
+SELECT subject, passed, expected_value AS bronze, observed_value AS accounted, details
+FROM superstore_catalog.prod_metrics.data_quality_checks
+WHERE check_name = 'reconciliation'
+ORDER BY checked_at DESC LIMIT 4;
+```
 
 **Severity:** ERROR. This is the strongest guarantee in the platform breaking.
 
@@ -97,7 +115,16 @@ and the second is the more serious.
 
 ---
 
-## Alert: Orphaned facts detected in `<fact_table>`
+## Alert: `[prod] Data quality: orphaned facts`
+
+*(Formerly logged as "Orphaned facts detected in `<fact_table>`".)* First query:
+
+```sql
+SELECT subject, observed_value AS orphaned_facts, checked_at
+FROM superstore_catalog.prod_metrics.data_quality_checks
+WHERE check_name = 'orphaned_facts'
+ORDER BY checked_at DESC LIMIT 2;
+```
 
 **Severity:** ERROR.
 
@@ -144,6 +171,49 @@ changes.
 
 ---
 
+## Alert: `[prod] Data quality: schema drift`
+
+**Severity:** depends on the event.
+
+| Event | Means | Do |
+|---|---|---|
+| `MISSING` | a column the model declares is gone from the source | Expect the entity split to fail too. Confirm with the source owner; remove or replace the column in `configs/` |
+| `RESCUED`, rows > 0 | rows Auto Loader could not fit the schema — usually a **type change**; the typed column goes NULL for them | Inspect `col__rescued_data` in `prod_bronze.superstore_raw`; fix the type or the source |
+| `NEW` | the source added a column the model ignores | Nothing is broken. Decide: declare it in the entity config, or add it to `ignored_source_columns`. The alert repeats daily until you do — a reminder, by design |
+
+```sql
+SELECT drift_status, column_name, row_count, detected_at
+FROM superstore_catalog.prod_metrics.schema_drift
+WHERE master_run_id = (SELECT max_by(master_run_id, detected_at)
+                       FROM superstore_catalog.prod_metrics.schema_drift);
+```
+
+See **[SCHEMA_DRIFT.md](SCHEMA_DRIFT.md)**.
+
+---
+
+## Alert: `[prod] Data quality: placeholder exposure growing`
+
+**Severity:** WARN.
+
+**What it means.** A dimension's share of rows carrying a placeholder (`'Unknown'`) rose by
+more than 5 percentage points since its previous run. The level was never the problem;
+the jump means a source began sending incomplete attributes. Revenue is still reported,
+but attributed to a bucket carrying no information.
+
+```sql
+SELECT subject, observed_value AS placeholder_pct, details, checked_at
+FROM superstore_catalog.prod_metrics.data_quality_checks
+WHERE check_name = 'placeholder_exposure'
+ORDER BY subject, checked_at DESC;
+```
+
+Then look at which attributes went to `'Unknown'` in the new rows (`repaired_columns` in
+Silver), and ask the source owner. The 5-point threshold is a starting value; tune it in
+`resources/superstore_data_quality_alerts.alert.yml` once there is history.
+
+---
+
 ## Alert: job failure email
 
 **Severity:** ERROR. Sent by the job itself on any task failure.
@@ -164,21 +234,6 @@ changes.
 - **A config key that never reached the code.** The Silver orchestrator rebuilds each
   entity's config from an explicit allowlist, so a new YAML key is dropped silently unless
   it is added in **both** the reconstruction and the call.
-
----
-
-## Alert: `NOT ROUTED` in the logs
-
-**Severity:** WARN, and it is about the alerting itself.
-
-No webhook secret is configured for `superstore_alerting`, so one of its data-quality
-alerts fired and went nowhere. Job failures and the freshness alert are unaffected — they
-reach Slack through the notification destination above, not this module. Set
-`superstore/slack_webhook_url` in the Databricks secret scope only if this module's route
-is kept.
-
-This is logged rather than silent on purpose: an unrouted workspace and a healthy one must
-not look identical.
 
 ---
 

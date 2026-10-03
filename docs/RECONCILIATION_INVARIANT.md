@@ -68,9 +68,15 @@ per merge, and an audit table that grows forever with copies of Bronze.
 
 ## How
 
-`reconciliation_sql()` builds the query; `log_reconciliation()` runs it and logs
-at ERROR when it does not balance. Both in
+`reconciliation_sql()` builds the query, in
 [`superstore_reconciliation.py`](../src/superstore_shared_utilities/superstore_reconciliation.py).
+`run_reconciliation_checks()` runs it for every entity after Silver, logs at ERROR
+when one does not balance, and records each result in
+`{env}_metrics.data_quality_checks`, where a SQL Alert reads it
+([`superstore_data_quality_checks.py`](../src/superstore_shared_utilities/superstore_data_quality_checks.py)).
+Until 2026-10-03 the pipeline never ran it at all: an earlier `log_reconciliation()`
+existed with unit tests and had no caller, so prod reconciled only when someone did
+it by hand.
 
 Two exclusions, both learned by getting it wrong:
 
@@ -95,7 +101,8 @@ failed the check for a reason unrelated to reconciliation.
 | Concern | Location |
 |---|---|
 | SQL builder (pure) | `superstore_reconciliation.reconciliation_sql` |
-| Execute + log | `superstore_reconciliation.log_reconciliation` |
+| Execute, log, record (every Silver run) | `superstore_data_quality_checks.run_reconciliation_checks`, called by the Silver orchestrator |
+| Alert | `resources/superstore_data_quality_alerts.alert.yml` → `superstore_dq_reconciliation` |
 | Unit tests | `tests/unit/shared/test_reconciliation.py` |
 | Integration check | `tests/integration_databricks/gold/assert_scd2_change.py` |
 

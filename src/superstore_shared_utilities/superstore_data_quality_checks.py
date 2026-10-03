@@ -14,12 +14,12 @@ Why this exists
 The checks were computed and only LOGGED. A SQL Alert can only query data that
 is stored, and logs are read by nothing: the 5%-of-revenue orphan problem sat
 in correctly-written log lines, unread. Worse, the reconciliation monitor
-(`superstore_reconciliation.log_reconciliation`) was built and unit-tested on
-2026-08-14 and never called by the pipeline at all -- prod had never checked
+(a `log_reconciliation` function) was built and unit-tested on 2026-08-14 and
+never called by the pipeline at all -- prod had never checked
 that every Bronze row is accounted for. This module is where that is fixed.
 
-It replaces `superstore_alerting`, which posted to a Slack webhook from inside
-the pipeline and was never configured. Delivery now belongs to SQL Alerts and a
+It replaced `superstore_alerting` (deleted 2026-10-03), which posted to a Slack
+webhook from inside the pipeline and was never configured. Delivery now belongs to SQL Alerts and a
 Databricks notification destination; the pipeline only records facts.
 
 Design rules
