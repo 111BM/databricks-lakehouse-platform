@@ -17,7 +17,11 @@ from datetime import datetime, timezone
 import pytest
 
 from superstore_data_quality_checks import (
+    CHECK_ORPHANED_FACTS,
+    CHECK_PLACEHOLDER_EXPOSURE,
     CHECK_RECONCILIATION,
+    orphaned_facts_check_row,
+    placeholder_exposure_check_row,
     reconciliation_check_row,
 )
 
@@ -85,3 +89,50 @@ def test_accepts_numeric_strings_from_spark_or_sql_api():
     result["balanced"] = True
     row = reconciliation_check_row("prod", "r", "customers", result, AT)
     assert row["expected_value"] == 10.0
+
+
+# ---------------------------------------------------------------- orphaned facts
+
+@pytest.mark.unit
+def test_zero_orphans_pass():
+    row = orphaned_facts_check_row("prod", "r", "facts_sales", "dim_products", 0, AT)
+    assert row["passed"] is True
+    assert row["check_name"] == CHECK_ORPHANED_FACTS
+    assert row["subject"] == "facts_sales->dim_products"
+    assert row["expected_value"] == 0.0
+
+
+@pytest.mark.unit
+def test_any_orphan_fails():
+    # Structurally impossible since severity tiers, so even one means a new cause.
+    row = orphaned_facts_check_row("prod", "r", "facts_orders", "dim_customers", 1, AT)
+    assert row["passed"] is False
+    assert row["observed_value"] == 1.0
+    assert json.loads(row["details"])["orphaned_facts"] == 1
+
+
+# ----------------------------------------------------------- placeholder exposure
+
+def _exposure(current=200, placeholders=10):
+    return {"current_rows": current, "placeholder_rows": placeholders,
+            "placeholder_pct": round(100 * placeholders / current, 4)}
+
+
+@pytest.mark.unit
+def test_placeholder_exposure_is_informational_at_any_level():
+    # Placeholders are normal; only growth across runs is a signal, and that is
+    # the alert's comparison. A row never fails on its own.
+    for placeholders in (0, 10, 150):
+        row = placeholder_exposure_check_row("prod", "r", "dim_customers",
+                                             _exposure(placeholders=placeholders), AT)
+        assert row["passed"] is True
+        assert row["expected_value"] is None
+        assert row["check_name"] == CHECK_PLACEHOLDER_EXPOSURE
+
+
+@pytest.mark.unit
+def test_placeholder_exposure_records_the_percentage():
+    row = placeholder_exposure_check_row("prod", "r", "dim_customers", _exposure(), AT)
+    assert row["observed_value"] == 5.0
+    assert json.loads(row["details"]) == {
+        "current_rows": 200, "placeholder_rows": 10, "placeholder_pct": 5.0}

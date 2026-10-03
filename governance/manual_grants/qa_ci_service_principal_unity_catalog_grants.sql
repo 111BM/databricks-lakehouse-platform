@@ -95,3 +95,20 @@ GRANT SELECT ON SCHEMA superstore_catalog.qa_metrics        TO `bireshmoktan@gma
 GRANT SELECT ON SCHEMA superstore_catalog.qa_mart           TO `bireshmoktan@gmail.com`;
 GRANT SELECT ON SCHEMA superstore_catalog.qa_features       TO `bireshmoktan@gmail.com`;
 GRANT SELECT ON SCHEMA superstore_catalog.qa_semantic_layer TO `bireshmoktan@gmail.com`;
+
+-- The integration_test_* schemas, run 2026-10-02/03 after the service principal
+-- recreated them. They are OWNED by the service principal, so the operator needs
+-- USE SCHEMA as well as SELECT: an owner holds USE SCHEMA implicitly, which is
+-- why SELECT alone was enough on prod (operator-owned) and was not here. The
+-- first grant gave SELECT only; querying data_quality_checks then failed with
+-- INSUFFICIENT_PERMISSIONS ("does not have USE SCHEMA"). These persist: the
+-- reset empties these schemas rather than dropping them.
+GRANT USE SCHEMA, SELECT ON SCHEMA superstore_catalog.integration_test_bronze         TO `bireshmoktan@gmail.com`;
+GRANT USE SCHEMA, SELECT ON SCHEMA superstore_catalog.integration_test_silver         TO `bireshmoktan@gmail.com`;
+GRANT USE SCHEMA, SELECT ON SCHEMA superstore_catalog.integration_test_gold           TO `bireshmoktan@gmail.com`;
+GRANT USE SCHEMA, SELECT ON SCHEMA superstore_catalog.integration_test_quarantine     TO `bireshmoktan@gmail.com`;
+GRANT USE SCHEMA, SELECT ON SCHEMA superstore_catalog.integration_test_audit          TO `bireshmoktan@gmail.com`;
+GRANT USE SCHEMA, SELECT ON SCHEMA superstore_catalog.integration_test_metrics        TO `bireshmoktan@gmail.com`;
+GRANT USE SCHEMA, SELECT ON SCHEMA superstore_catalog.integration_test_mart           TO `bireshmoktan@gmail.com`;
+GRANT USE SCHEMA, SELECT ON SCHEMA superstore_catalog.integration_test_features       TO `bireshmoktan@gmail.com`;
+GRANT USE SCHEMA, SELECT ON SCHEMA superstore_catalog.integration_test_semantic_layer TO `bireshmoktan@gmail.com`;

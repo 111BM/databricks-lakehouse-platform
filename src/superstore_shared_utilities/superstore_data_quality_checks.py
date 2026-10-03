@@ -52,6 +52,8 @@ TABLE_SCHEMA = (
 )
 
 CHECK_RECONCILIATION = "reconciliation"
+CHECK_ORPHANED_FACTS = "orphaned_facts"
+CHECK_PLACEHOLDER_EXPOSURE = "placeholder_exposure"
 
 _RECONCILIATION_TERMS = (
     "bronze_rows", "silver_rows", "quarantine_rows", "audit_rows",
@@ -81,6 +83,56 @@ def reconciliation_check_row(env, master_run_id, entity, result, checked_at):
         "expected_value": float(terms["bronze_rows"]),
         "passed": bool(result["balanced"]),
         "details": json.dumps(terms, sort_keys=True),
+        "checked_at": checked_at,
+    }
+
+
+def orphaned_facts_check_row(env, master_run_id, fact_table, dimension_table, orphan_count, checked_at):
+    """
+    Facts with no current dimension version. Pure.
+
+    Expected value is 0 and the check passes only at 0: since severity tiers a
+    quarantined dimension no longer strands its facts, so orphans are
+    structurally impossible and any non-zero count means a NEW cause.
+    """
+    count = int(orphan_count)
+    return {
+        "master_run_id": master_run_id,
+        "env": env,
+        "check_name": CHECK_ORPHANED_FACTS,
+        "subject": f"{fact_table}->{dimension_table}",
+        "observed_value": float(count),
+        "expected_value": 0.0,
+        "passed": count == 0,
+        "details": json.dumps({"fact_table": fact_table, "dimension_table": dimension_table,
+                               "orphaned_facts": count}, sort_keys=True),
+        "checked_at": checked_at,
+    }
+
+
+def placeholder_exposure_check_row(env, master_run_id, dimension_table, exposure, checked_at):
+    """
+    Share of a dimension's current rows carrying a placeholder ('Unknown'). Pure.
+
+    Always recorded as passed: placeholders are normal -- some entities have no
+    value anywhere -- so no absolute level is a failure. The SIGNAL is growth run
+    over run, which only a query across runs can see; that comparison belongs to
+    the SQL Alert, not here. expected_value is None for the same reason.
+
+    `exposure` is the dict returned by log_placeholder_exposure.
+    """
+    current = int(exposure["current_rows"])
+    placeholders = int(exposure["placeholder_rows"])
+    return {
+        "master_run_id": master_run_id,
+        "env": env,
+        "check_name": CHECK_PLACEHOLDER_EXPOSURE,
+        "subject": dimension_table,
+        "observed_value": float(exposure["placeholder_pct"]),
+        "expected_value": None,
+        "passed": True,
+        "details": json.dumps({"current_rows": current, "placeholder_rows": placeholders,
+                               "placeholder_pct": float(exposure["placeholder_pct"])}, sort_keys=True),
         "checked_at": checked_at,
     }
 

@@ -188,7 +188,7 @@ risk ended when the token stopped working. On 2026-10-02:
 | qa deployed as the SP | qa bundle state written 15:14:10 in the shared folder; jobs renamed, `run_as` = the qa SP, schedule PAUSED |
 | History kept | 86 runs attached to `842114418338454`, oldest 2026-07-27, including cited run `801626137950969` |
 | Integration suite runs as the SP | run `645322115490319`: started by the qa SP, 21/21 tasks SUCCESS, none retried; all nine `integration_test_*` schemas recreated and owned by it |
-| Reset empties, keeps grants | run `252852975399843` (green): exit `CLEANUP_DONE objects_dropped=37`; all nine schema IDs unchanged; the operator's `SELECT` survived on all nine |
+| Reset empties, keeps grants | run `252852975399843` (green): exit `CLEANUP_DONE objects_dropped=37`; all nine schema IDs unchanged; the operator's `SELECT` survived on all nine; the operator's grants also need `USE SCHEMA` (not only `SELECT`) on these service-principal-owned schemas — an owner holds it implicitly, which is why `SELECT` alone sufficed on prod |
 | dev deploys over OAuth | `bundle plan -t dev --profile oauth` → 0 changes; `bundle deploy` → 131 files uploaded, dev bundle state written 17:06:38 |
 
 ## What this does not cover
