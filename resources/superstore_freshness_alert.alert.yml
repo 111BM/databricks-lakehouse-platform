@@ -23,7 +23,18 @@ resources:
     superstore_freshness:
       display_name: "[${bundle.target}] Superstore pipeline freshness"
       warehouse_id: ${var.sql_warehouse_id}
-      parent_path: ${workspace.resource_path}
+      # The existing freshness alerts (dev, qa, prod) live in the operator's home
+      # folder, because they were created while deploys still ran as that person.
+      # They cannot be moved: the Alerts API rejects any change of parent_path
+      # ("Updating parent path is not supported") -- found when a move to the
+      # bundle folder failed the qa deploy on 2026-10-03, although `bundle plan`
+      # had shown it as an ordinary update. So the path is kept, written in
+      # terms of operator_email rather than a literal.
+      #
+      # In a NEW workspace, where a service principal creates this alert, use
+      # ${workspace.resource_path} instead: a service principal cannot create
+      # objects in a person's home folder. The data-quality alerts already do.
+      parent_path: /Workspace/Users/${var.operator_email}
 
       # Hours since the most recent SUCCESSFUL Silver run, across every entity.
       #

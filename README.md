@@ -274,6 +274,7 @@ The bundle resolves workspace-specific objects **by name** (`variables` in `data
 |---|---|
 | Workspace host | `workspace.host` in each target of `databricks.yml` |
 | Operator email | `operator_email` default in `databricks.yml` |
+| Freshness alert folder | `parent_path` in `resources/superstore_freshness_alert.alert.yml` → `${workspace.resource_path}`. Here it stays in the operator's home folder, where the original was created: the Alerts API cannot move an alert, so a service principal could never relocate it — but in a new workspace a service principal creates it, and cannot write into a person's home |
 
 Then grant each service principal its access (scripts in **[governance/manual_grants/](governance/manual_grants/)**), and add GitHub Actions repository secrets: `DATABRICKS_HOST`, `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET` (prod), `DATABRICKS_QA_CLIENT_ID` / `DATABRICKS_QA_CLIENT_SECRET` (qa). Pushes to `qa` deploy and test; prod deploys only from **Run workflow** on `main`.
 
