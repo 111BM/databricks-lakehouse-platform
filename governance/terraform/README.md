@@ -23,11 +23,15 @@ Three things must be true, and none of them are in this repository:
    identity must never be used here.
 
 ```bash
-export DATABRICKS_TOKEN=...   # or: export DATABRICKS_CONFIG_PROFILE=<profile>
+databricks auth login --host https://<workspace>.cloud.databricks.com   # OAuth, once
+export DATABRICKS_CONFIG_PROFILE=DEFAULT                                # the profile to use
 ```
 
 Credentials come from the environment, never from a variable — so nothing sensitive can
-reach state, a saved plan, or a PR comment.
+reach state, a saved plan, or a PR comment. Personal access tokens were revoked on
+2026-10-02 and are no longer used anywhere in this project; a person runs `plan` and
+`apply` under their own OAuth login (see [docs/NON_PROD_IDENTITY.md](../../docs/NON_PROD_IDENTITY.md)).
+CI runs only the credential-free checks (`fmt`, `validate`, `terraform test`).
 
 ## Normal workflow
 
