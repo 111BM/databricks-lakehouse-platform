@@ -1,0 +1,204 @@
+# ==============================================================================
+# Data quality alerts
+# ==============================================================================
+# Four Databricks SQL Alerts over what the pipeline records each run, delivered
+# to email and to Slack (#superstore-data-platform-alerts) through the same
+# notification destination as job failures and the freshness alert.
+#
+# They replace superstore_alerting, which posted to a Slack webhook from inside
+# the pipeline and was never configured: the pipeline now only RECORDS facts
+# ({env}_metrics.data_quality_checks, {env}_metrics.schema_drift), and whether a
+# person is told is decided here, as reviewed, versioned bundle resources.
+#
+# Shape, shared by all four (the freshness alert's lesson): each query is an
+# aggregate returning exactly ONE row with ONE number, which is 0 -- never NULL
+# -- when there is nothing to report. `NULL > 0` is not TRUE, so a NULL would
+# read as OK whatever happened. A missing table makes the query fail instead,
+# which Databricks reports as state ERROR, by email: loud, not silent.
+#
+# Each looks only at the LATEST recorded run of its check, so a problem fixed by
+# the next run clears itself (notify_on_ok tells you so).
+#
+# Active in prod only: dev and qa pause them in their targets, as for freshness.
+#
+# parent_path is the bundle's own folder, not a person's home: these are created
+# by the deploying service principal, which can write there and cannot write
+# into anyone's home folder. (The freshness alert lives in a home folder only
+# because it was created while deploys still ran as a person.)
+# See docs/ALERT_RESPONSE.md for what each means and what to do.
+# ==============================================================================
+
+resources:
+  alerts:
+
+    # --------------------------------------------------------------------------
+    # 1. Reconciliation: bronze == silver + quarantine + audit + superseded
+    # --------------------------------------------------------------------------
+    # Any entity not balancing means a Bronze row exists that no rule explains.
+    # Recorded by Silver after every successful run.
+    superstore_dq_reconciliation:
+      display_name: "[${bundle.target}] Data quality: reconciliation unbalanced"
+      warehouse_id: 0c5a02c28448ef5b
+      parent_path: ${workspace.resource_path}
+      query_text: |
+        WITH latest AS (
+          SELECT max_by(master_run_id, checked_at) AS run_id
+          FROM ${var.catalog}.${var.schema}_metrics.data_quality_checks
+          WHERE check_name = 'reconciliation'
+        )
+        SELECT COUNT_IF(NOT c.passed) AS unbalanced_entities
+        FROM ${var.catalog}.${var.schema}_metrics.data_quality_checks c
+        JOIN latest l ON c.master_run_id = l.run_id
+        WHERE c.check_name = 'reconciliation'
+      evaluation:
+        source:
+          name: unbalanced_entities
+          aggregation: MAX
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 0
+        empty_result_state: TRIGGERED
+        notification:
+          notify_on_ok: true
+          retrigger_seconds: 86400
+          subscriptions:
+            - user_email: bireshmoktan@gmail.com
+            - destination_id: 9da11076-679f-4b8b-b29b-c815842f4b35
+      schedule:
+        quartz_cron_schedule: "0 0 8 * * ?"
+        timezone_id: Australia/Sydney
+
+    # --------------------------------------------------------------------------
+    # 2. Orphaned facts: facts with no current dimension version
+    # --------------------------------------------------------------------------
+    # Structurally 0 since severity tiers, so any count is a new cause -- and the
+    # revenue of those facts is absent from every mart. Recorded by
+    # mart_customer_360 and mart_production_performance.
+    superstore_dq_orphaned_facts:
+      display_name: "[${bundle.target}] Data quality: orphaned facts"
+      warehouse_id: 0c5a02c28448ef5b
+      parent_path: ${workspace.resource_path}
+      query_text: |
+        WITH latest AS (
+          SELECT subject, max_by(master_run_id, checked_at) AS run_id
+          FROM ${var.catalog}.${var.schema}_metrics.data_quality_checks
+          WHERE check_name = 'orphaned_facts'
+          GROUP BY subject
+        )
+        SELECT CAST(COALESCE(SUM(c.observed_value), 0) AS BIGINT) AS orphaned_facts
+        FROM ${var.catalog}.${var.schema}_metrics.data_quality_checks c
+        JOIN latest l ON c.subject = l.subject AND c.master_run_id = l.run_id
+        WHERE c.check_name = 'orphaned_facts'
+      evaluation:
+        source:
+          name: orphaned_facts
+          aggregation: MAX
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 0
+        empty_result_state: TRIGGERED
+        notification:
+          notify_on_ok: true
+          retrigger_seconds: 86400
+          subscriptions:
+            - user_email: bireshmoktan@gmail.com
+            - destination_id: 9da11076-679f-4b8b-b29b-c815842f4b35
+      schedule:
+        quartz_cron_schedule: "0 0 8 * * ?"
+        timezone_id: Australia/Sydney
+
+    # --------------------------------------------------------------------------
+    # 3. Schema drift: the source changed shape
+    # --------------------------------------------------------------------------
+    # MISSING  -- a declared column is gone; the entity split will fail on it.
+    # RESCUED with rows -- rows Auto Loader could not fit the schema, usually a
+    #             type change; otherwise the column silently goes NULL.
+    # NEW      -- the source added a column the model ignores. Nothing broken,
+    #             but someone should decide. It repeats daily until the column is
+    #             declared or listed in ignored_source_columns -- a reminder, by
+    #             design.
+    # RESCUED with 0 rows is the per-run heartbeat, and is not counted.
+    superstore_dq_schema_drift:
+      display_name: "[${bundle.target}] Data quality: schema drift"
+      warehouse_id: 0c5a02c28448ef5b
+      parent_path: ${workspace.resource_path}
+      query_text: |
+        WITH latest AS (
+          SELECT max_by(master_run_id, detected_at) AS run_id
+          FROM ${var.catalog}.${var.schema}_metrics.schema_drift
+        )
+        SELECT COUNT_IF(
+                 d.drift_status IN ('NEW', 'MISSING')
+                 OR (d.drift_status = 'RESCUED' AND d.row_count > 0)
+               ) AS drift_events
+        FROM ${var.catalog}.${var.schema}_metrics.schema_drift d
+        JOIN latest l ON d.master_run_id = l.run_id
+      evaluation:
+        source:
+          name: drift_events
+          aggregation: MAX
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 0
+        empty_result_state: TRIGGERED
+        notification:
+          notify_on_ok: true
+          retrigger_seconds: 86400
+          subscriptions:
+            - user_email: bireshmoktan@gmail.com
+            - destination_id: 9da11076-679f-4b8b-b29b-c815842f4b35
+      schedule:
+        quartz_cron_schedule: "0 0 8 * * ?"
+        timezone_id: Australia/Sydney
+
+    # --------------------------------------------------------------------------
+    # 4. Placeholder exposure growing
+    # --------------------------------------------------------------------------
+    # Placeholders ('Unknown') are normal at any steady level -- some entities
+    # genuinely have no value -- so alerting on presence would fire forever and
+    # get muted. The signal is GROWTH: a dimension's placeholder share rising
+    # between its latest run and the one before means a source began arriving
+    # incomplete. Threshold: 5 percentage points, a starting value to tune once
+    # there is history. With fewer than two recorded runs there is nothing to
+    # compare, and the result is 0, not NULL.
+    superstore_dq_placeholder_growth:
+      display_name: "[${bundle.target}] Data quality: placeholder exposure growing"
+      warehouse_id: 0c5a02c28448ef5b
+      parent_path: ${workspace.resource_path}
+      query_text: |
+        WITH per_run AS (
+          SELECT subject, master_run_id,
+                 MAX(observed_value) AS pct, MAX(checked_at) AS at
+          FROM ${var.catalog}.${var.schema}_metrics.data_quality_checks
+          WHERE check_name = 'placeholder_exposure'
+          GROUP BY subject, master_run_id
+        ),
+        ranked AS (
+          SELECT *, ROW_NUMBER() OVER (PARTITION BY subject ORDER BY at DESC) AS rn
+          FROM per_run
+        )
+        SELECT ROUND(COALESCE(MAX(cur.pct - prev.pct), 0), 2) AS max_growth_pct_points
+        FROM ranked cur
+        JOIN ranked prev ON cur.subject = prev.subject
+        WHERE cur.rn = 1 AND prev.rn = 2
+      evaluation:
+        source:
+          name: max_growth_pct_points
+          aggregation: MAX
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 5
+        empty_result_state: TRIGGERED
+        notification:
+          notify_on_ok: true
+          retrigger_seconds: 86400
+          subscriptions:
+            - user_email: bireshmoktan@gmail.com
+            - destination_id: 9da11076-679f-4b8b-b29b-c815842f4b35
+      schedule:
+        quartz_cron_schedule: "0 0 8 * * ?"
+        timezone_id: Australia/Sydney

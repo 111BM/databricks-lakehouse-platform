@@ -9,6 +9,7 @@ include:
   - resources/superstore_lakehouse_job.job.yml
   - resources/integration_test_job.job.yml
   - resources/superstore_freshness_alert.alert.yml
+  - resources/superstore_data_quality_alerts.alert.yml
 
 # Variable declarations. These variables are assigned in the dev/prod targets below.
 variables:
@@ -58,6 +59,22 @@ targets:
           # and qa this alert would report "stale" every day forever and train
           # the reader to ignore it. Paused rather than deleted so the three
           # environments keep one definition.
+          schedule:
+            pause_status: PAUSED
+        # The data quality alerts are paused outside prod for a different
+        # reason: dev and qa data is test data. The integration suite DELIBERATELY
+        # sends a new column and dirty rows, so these would fire on purpose every
+        # run. Their queries were exercised against that data before deploying.
+        superstore_dq_reconciliation:
+          schedule:
+            pause_status: PAUSED
+        superstore_dq_orphaned_facts:
+          schedule:
+            pause_status: PAUSED
+        superstore_dq_schema_drift:
+          schedule:
+            pause_status: PAUSED
+        superstore_dq_placeholder_growth:
           schedule:
             pause_status: PAUSED
 
@@ -115,6 +132,22 @@ targets:
           # and qa this alert would report "stale" every day forever and train
           # the reader to ignore it. Paused rather than deleted so the three
           # environments keep one definition.
+          schedule:
+            pause_status: PAUSED
+        # The data quality alerts are paused outside prod for a different
+        # reason: dev and qa data is test data. The integration suite DELIBERATELY
+        # sends a new column and dirty rows, so these would fire on purpose every
+        # run. Their queries were exercised against that data before deploying.
+        superstore_dq_reconciliation:
+          schedule:
+            pause_status: PAUSED
+        superstore_dq_orphaned_facts:
+          schedule:
+            pause_status: PAUSED
+        superstore_dq_schema_drift:
+          schedule:
+            pause_status: PAUSED
+        superstore_dq_placeholder_growth:
           schedule:
             pause_status: PAUSED
 
