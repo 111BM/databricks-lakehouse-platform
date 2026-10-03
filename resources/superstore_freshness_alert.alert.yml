@@ -22,8 +22,8 @@ resources:
   alerts:
     superstore_freshness:
       display_name: "[${bundle.target}] Superstore pipeline freshness"
-      warehouse_id: 0c5a02c28448ef5b
-      parent_path: /Workspace/Users/bireshmoktan@gmail.com
+      warehouse_id: ${var.sql_warehouse_id}
+      parent_path: ${workspace.resource_path}
 
       # Hours since the most recent SUCCESSFUL Silver run, across every entity.
       #
@@ -96,11 +96,11 @@ resources:
           # channel people mute, after which the next real alert is invisible.
           retrigger_seconds: 86400
           subscriptions:
-            - user_email: bireshmoktan@gmail.com
+            - user_email: ${var.operator_email}
             # The Slack channel #superstore-data-platform-alerts, via a
             # Databricks notification destination (ID only; the webhook URL
             # stays inside Databricks). Email remains as the fallback.
-            - destination_id: 9da11076-679f-4b8b-b29b-c815842f4b35
+            - destination_id: ${var.alerts_destination_id}
 
       # Checked daily at 08:00, ~2 hours after the Sunday 06:00 run. Daily
       # rather than weekly so a missed run is caught within a day rather than

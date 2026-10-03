@@ -424,7 +424,7 @@ resources:
 
       email_notifications:
         on_failure:
-          - bireshmoktan@gmail.com
+          - ${var.operator_email}
         no_alert_for_skipped_runs: true
 
       # Failures also post to the Slack channel #superstore-data-platform-alerts,
@@ -434,6 +434,6 @@ resources:
       # See docs/ALERT_RESPONSE.md.
       webhook_notifications:
         on_failure:
-          - id: 9da11076-679f-4b8b-b29b-c815842f4b35   # superstore-data-platform-alerts
+          - id: ${var.alerts_destination_id}   # superstore-data-platform-alerts
 
       performance_target: PERFORMANCE_OPTIMIZED
