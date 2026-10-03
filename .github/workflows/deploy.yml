@@ -25,6 +25,15 @@ name: Superstore Data Platform CI/CD
 on:
   push:
     branches: [dev, qa, main]
+    # A push that changes ONLY documentation skips this workflow entirely --
+    # and with it the qa deploy and the ~40-minute integration suite, which is
+    # triggered by this workflow completing. Markdown is never deployed or run,
+    # so testing it proves nothing (2026-10-03: a README-only qa run was being
+    # cancelled by hand). A push that mixes docs with anything else still runs
+    # everything: paths-ignore skips only when EVERY changed file matches.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
   # Adds the "Run workflow" button in the Actions tab. It is the only way prod
   # deploys: a push to main runs the unit tests and stops there.
   workflow_dispatch:

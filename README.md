@@ -187,6 +187,7 @@ push to dev  ──► unit tests   (dev is deployed by the developer: databrick
 push to qa   ──► unit tests ──► deploy to qa ──► integration test (auto)
 push to main ──► unit tests   (prod NOT deployed)
 Run workflow (main, by hand) ──► unit tests ──► deploy to prod
+push that changes ONLY *.md or docs/ ──► nothing (no deploy, no 40-minute suite)
 ```
 
 - **Branch strategy:** `dev` → `qa` → `main`, each branch mapped to a bundle target.
