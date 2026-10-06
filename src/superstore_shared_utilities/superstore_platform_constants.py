@@ -15,8 +15,8 @@ Key Features:
 2. Default Pipeline Info:
     - Provides default names and version information for the pipeline, used as a fallback if not otherwise specified.
 
-3. Environments (commented out):
-    - Constants that would represent different environments (e.g., `dev`, `qa`, `prod`) in which the pipeline can be executed. These constants are currently commented out for flexibility.
+The environment (dev, qa, prod, integration_test) is not a constant: it comes from the
+SUPERSTORE_ENV job parameter, read by superstore_platform_config.get_env().
 
 Usage:
     The constants in this module are imported across various parts of the pipeline to:

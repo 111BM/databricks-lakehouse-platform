@@ -45,8 +45,8 @@ terraform {
 # Workspace-level provider. Grants on catalogs and schemas are workspace API
 # calls, so this is deliberately NOT the account-level provider.
 #
-# Authentication comes from the environment (DATABRICKS_TOKEN, or a CLI profile
-# via DATABRICKS_CONFIG_PROFILE) rather than from a variable, so a credential is
+# Authentication comes from the environment (an OAuth CLI profile via
+# DATABRICKS_CONFIG_PROFILE; see README.md) rather than from a variable, so a credential is
 # never a value that could end up in state, a plan file or a PR comment.
 #
 # The identity used here must own the securables or be a metastore admin — it is

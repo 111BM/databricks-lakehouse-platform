@@ -135,7 +135,8 @@ locals {
   }
 
   # The writer joins the model only once a service principal is configured. Until
-  # backlog item 1 lands, the pipeline runs as an owner and needs no grant.
+  # the model can apply, the pipeline's service principals are granted by
+  # governance/manual_grants/ instead.
   model_with_writer = {
     for domain, roles in local.model :
     domain => (

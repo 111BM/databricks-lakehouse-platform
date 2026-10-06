@@ -204,9 +204,9 @@ jobs:
     # not a personal access token: a person's token carries all of that
     # person's rights (here, workspace admin) and stops working when they
     # leave or it expires. The service principal holds only what the pipeline
-    # needs -- see governance/manual_grants/. dev and qa still deploy with the PAT:
-    # their bundle roots live under a user's home folder (`~/`), so switching
-    # identity there would duplicate their jobs rather than update them.
+    # needs -- see governance/manual_grants/. qa has its own service principal
+    # (deploy-qa above); dev is deployed by the developer under their own OAuth
+    # login, not by CI. See docs/NON_PROD_IDENTITY.md.
     #
     # DATABRICKS_TOKEN must NOT also be set here: with two auth methods in the
     # environment the CLI refuses to pick one and fails.

@@ -30,8 +30,8 @@ variables {
 }
 
 # ------------------------------------------------------------------------------
-# The default model: no service principal, because the pipeline still runs as an
-# owner (backlog item 1).
+# The default model: no service principal, because the pipeline's service
+# principals are granted by governance/manual_grants/, not by this model.
 # ------------------------------------------------------------------------------
 run "default_model_shape" {
   command = plan

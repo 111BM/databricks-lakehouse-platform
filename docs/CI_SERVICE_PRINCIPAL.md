@@ -9,8 +9,8 @@
 
 Prod is deployed by, and runs as, a Databricks **service principal** called
 `superstore-ci-prod` (application ID `328034f8-49c9-4071-a093-bc4ac9466bc2`)
-instead of a person's personal access token. This closes backlog item 1 for
-**prod**; dev and qa deliberately still use the token (see
+instead of a person's personal access token. This closed backlog item 1 for
+**prod**; dev and qa followed on 2026-10-02 and the token was revoked (see
 [What this does not cover](#what-this-does-not-cover)).
 
 A service principal is an identity for software: it cannot log in to the UI, it

@@ -182,10 +182,12 @@ precondition would be needed because the mistake would be unavailable. That is a
 migration of every table reference in the platform, not a fix, so it stays a known
 limitation.
 
-**The writer is declared but inert.** `pipeline_service_principal` is empty, because the
-pipeline still runs as a person who owns these schemas and therefore needs no grant
-(backlog item 1). The privilege model for the writer is already written; closing item 1
-is setting one variable, not designing anything.
+**The writer is declared but inert.** `pipeline_service_principal` is empty. Backlog
+item 1 has landed — prod and qa run as their own service principals — but their grants
+come from the scripts in `governance/manual_grants/`, because this model cannot be
+applied on Free Edition (no account groups). Setting the variable becomes meaningful
+when the model can apply, and it will then need to be one principal per environment:
+the single variable predates there being two (`superstore-ci-qa`, `superstore-ci-prod`).
 
 **Applying is manual, and CI does not enforce the review gate.**
 `.github/workflows/governance.yml` runs `fmt`, `validate` and `terraform test` on pull

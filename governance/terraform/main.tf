@@ -128,6 +128,6 @@ output "governed_schema_count" {
 }
 
 output "writer_configured" {
-  description = "False while the pipeline still runs as a schema owner (backlog item 1)."
+  description = "False while the pipeline's service principals are granted by governance/manual_grants/, not this model."
   value       = var.pipeline_service_principal != ""
 }

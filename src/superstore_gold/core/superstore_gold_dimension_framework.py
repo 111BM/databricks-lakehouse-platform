@@ -9,7 +9,7 @@ Purpose:
     - Applies Slowly Changing Dimension Type 2 (SCD2) logic for capturing historical data changes, ensuring accurate tracking of data changes over time.
     - Performs an idempotent merge from Silver to Gold using Delta Lake's `MERGE` operation, ensuring no data duplication and maintaining data integrity.
     - Handles dynamic partitioning and repartitioning for better performance with large datasets.
-    - Optimizes the Gold table for query performance using Z-Ordering and performs a vacuum operation to remove stale data.
+    - Leaves OPTIMIZE and VACUUM to Unity Catalog Predictive Optimization (see `optimize_gold_table`).
     - Collects performance metrics for observability, including row counts and processing time.
 
 Key Features:
@@ -27,8 +27,8 @@ Key Features:
 
 4. Performance Optimization:
     - The pipeline dynamically repartitions data to optimize memory usage and performance.
-    - Uses Z-Ordering on key columns for efficient query performance, particularly after large inserts or updates.
-    - The VACUUM operation removes stale data and optimizes storage.
+    - Large merges are split into hash-assigned buckets (`max_rows_per_bucket`).
+    - OPTIMIZE and VACUUM are handled by Predictive Optimization; the helpers here are deliberately not called.
 
 5. Metrics Collection:
     - Tracks various metrics, including the number of rows read, inserted, updated, unchanged, and soft-deleted.
@@ -45,7 +45,6 @@ Best Practices / Notes:
 - Ensure that the `silver_ingestion_ts` column is correctly populated in the Silver table to enable efficient incremental loading.
 - Properly configure the `effective_from` and `effective_to` fields to maintain the historical integrity of the dimensional data.
 - Monitor the metrics output to keep track of the pipeline's performance and make adjustments as needed.
-- Perform the `OPTIMIZE` operation after significant data loads to improve query performance and partition pruning.
 - The pipeline can be modified for other types of slowly changing dimensions or different Delta tables as needed.
 
 ==============================================================

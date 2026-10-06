@@ -61,13 +61,13 @@ variable "pipeline_service_principal" {
   description = <<-EOT
     Application ID of the service principal the pipeline runs as.
 
-    Empty by default, and that is not an oversight: backlog item 1 (OAuth M2M
-    service principal) has not landed, so the pipeline still runs as a person
-    who OWNS these schemas and therefore needs no grant at all. Granting to a
-    principal that does not exist would fail every apply.
+    Empty by default, and that is not an oversight. Backlog item 1 has landed:
+    prod and qa run as their own service principals (superstore-ci-prod,
+    superstore-ci-qa), granted by the scripts in governance/manual_grants/,
+    because this model cannot be applied on Free Edition (no account groups).
 
-    Set this when item 1 lands and the writer grants below start applying. That
-    is the whole change — the privilege model for the writer is already written.
+    Set this once the model can apply. It will then need to become one
+    principal per environment: this single variable predates there being two.
   EOT
   type        = string
   default     = ""

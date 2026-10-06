@@ -1,47 +1,41 @@
 """
 ==============================================================
-Module: Silver to Gold-Facts ETL Pipeline with SCD2, Merge Operations & Performance Optimization
+Module: Silver to Gold-Facts ETL Pipeline with Hash-Based Merge
 
 Purpose:
-    This module orchestrates the ETL process to move data from Silver to Gold tables in a Databricks Delta Lake environment. 
+    This module moves fact data from Silver to Gold tables in a Databricks Delta Lake environment.
     The pipeline performs the following operations:
     - Fetches incremental data from Silver, ensuring that only new records are processed.
-    - Prepares data for Slowly Changing Dimension Type 2 (SCD2) processing, including adding `effective_from`, `effective_to`, 
-      and `is_current` fields to track historical changes.
-    - Uses idempotent merge operations to safely insert or update records in the Gold table, ensuring data integrity.
-    - Collects detailed metrics on the pipeline's performance, including the number of rows processed, inserted, updated, and deleted.
-    - Optimizes the Gold table using Z-Ordering and performs VACUUM operations to maintain storage efficiency and query performance.
+    - Adds a row hash over the fact's columns so unchanged rows can be skipped.
+    - Uses idempotent merge operations on the natural keys to insert or update records in the Gold table.
+    - Collects detailed metrics on the pipeline's performance, including rows read, inserted, updated and unchanged.
+
+    Facts are not SCD2: a fact row is updated in place when its hash changes. History is
+    kept on the dimensions (see superstore_gold_dimension_framework).
 
 Key Features:
 1. Incremental Data Ingestion:
     - Loads only new or updated records from the Silver table based on `silver_ingestion_ts`.
     - Ensures that the Gold table is updated without reprocessing old records.
 
-2. SCD2 (Slowly Changing Dimension Type 2) Processing:
-    - Tracks historical changes in records by adding `effective_from` and `effective_to` timestamps.
-    - Identifies current records with the `is_current` flag to allow for incremental and historical analysis.
-
-3. Merge Operations:
+2. Merge Operations:
     - Idempotent Delta `MERGE` operations to update existing records or insert new records in the Gold table.
     - Ensures that updates only occur when a hash of the data has changed, avoiding unnecessary duplication.
 
-4. Metrics Collection and Monitoring:
-    - Tracks pipeline metrics such as rows read, inserted, updated, unchanged, and soft-deleted.
+3. Metrics Collection and Monitoring:
+    - Tracks pipeline metrics such as rows read, inserted, updated and unchanged. Facts have no soft deletes.
     - Computes throughput and skew ratios for better observability of pipeline performance.
 
-5. Gold Table Optimization:
-    - Z-Orders the Gold table based on key columns to improve query performance and partition pruning.
-    - Performs a VACUUM operation to clean up old data, retaining the specified number of hours of data for safety.
+4. Table Maintenance:
+    - OPTIMIZE and VACUUM are handled by Unity Catalog Predictive Optimization.
+      `optimize_gold_table` and `vacuum_gold_table` predate it and are deliberately not called.
 
-6. Serverless Compatibility & Performance:
-    - Fully DataFrame-based pipeline optimized for Databricks serverless clusters.
-    - Uses dynamic partitioning and bucketing strategies to handle large datasets efficiently.
+5. Serverless Compatibility:
+    - Fully DataFrame-based pipeline; no cache()/persist(), which Serverless forbids.
 
 Best Practices / Notes:
 - Ensure business keys and hash columns are properly configured for correct merge operations and deduplication.
-- The `effective_from` and `effective_to` columns in the Gold table must be carefully managed to maintain data history.
-- Z-Ordering is essential for efficient querying, particularly after large inserts or updates in the Gold table.
-- The pipeline is designed to handle incremental loads, but if necessary, full loads can be performed when required.
+- The pipeline is designed to handle incremental loads; replay and backfill windows are set by the job's run_mode.
 - The metrics collection helps monitor pipeline performance and troubleshoot issues in production environments.
 - Ensure that schema evolution is handled carefully, especially when adding new fields or modifying existing ones.
 
