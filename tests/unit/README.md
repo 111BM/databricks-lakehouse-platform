@@ -34,6 +34,7 @@ tests/unit/
   conftest.py                      # local Spark, portable imports, fake dbutils
   shared/
     test_backfill_config.py        # get_backfill_config (date/mode validation)
+    test_liquid_clustering.py      # plan_clustering, validate_cluster_columns
   bronze/
     test_sanitize_column.py        # module 01: sanitize_column
   silver/
@@ -55,6 +56,7 @@ pipeline on seeded data), not here.
 | Layer | Module | Unit-tested (pure) | Integration-only (I/O) |
 |-------|--------|--------------------|------------------------|
 | Shared | backfill_utils | `get_backfill_config` ✅ | `get_incremental_with_backfill` (reads tables) |
+| Shared | liquid_clustering | `plan_clustering` ✅, `validate_cluster_columns` ✅ | `converge_liquid_clustering` (DESCRIBE DETAIL, ALTER/REPLACE TABLE) |
 | Bronze | 01 ingest | `sanitize_column` ✅ | `bronze_ingest_incremental` (Auto Loader, Delta write) |
 | Bronze | 02 entity split | — (module reads a YAML at import + all funcs do table I/O) | `bronze_entity_incremental_append`, `collect_entity_metrics`, `get_last_processed_ts` |
 | Silver | silver_module | `deduplicate_latest_wins` ✅, `row_hash` ✅, `clean_string_columns` ✅, `add_error_columns` ✅, `add_is_valid` ✅ | `bronze_to_silver_prod` shell (read/merge/write), `write_etl_metrics`; the bespoke `ship_date<order_date` rule stays inline |

@@ -29,6 +29,10 @@ column_rename_map:
 # -------------------------------
 bronze_main:
   table_name: "superstore_raw"  # just entity/table name, no catalog/schema
+  # Liquid Clustering keys (at most 4), applied by superstore_liquid_clustering.
+  # The entity split reads this table as `bronze_ingestion_ts > last processed`,
+  # so that is the key that lets it skip files. Replaces PARTITIONED BY (ingestion_date).
+  cluster_by_columns: ["bronze_ingestion_ts"]
   metrics_table: "bronze_layer_main_ingestion_metrics"
   layer_name: "Bronze"
   metadata_columns:
@@ -64,6 +68,11 @@ ignored_source_columns:
 # -------------------------------
 # Bronze entities
 # -------------------------------
+# cluster_by_columns: Liquid Clustering keys (at most 4), applied by
+# superstore_liquid_clustering. bronze_ingestion_ts first because Silver reads
+# each entity by an ingestion-time window; the business key second because that
+# is what lookups and deduplication filter on. Replaces PARTITIONED BY
+# (bronze_ingestion_ts), which made a new partition of small files every run.
 bronze_entities:
   customers:
     table_name: "customers"
@@ -73,8 +82,7 @@ bronze_entities:
     layer_name: "Bronze"
     columns: ["customer_id", "customer_name", "segment", "country", "state", "city", "postal_code", "region"]
     business_key: "customer_id"
-    partition_col: "bronze_ingestion_ts"
-    z_order_columns: ["customer_id"]
+    cluster_by_columns: ["bronze_ingestion_ts", "customer_id"]
     metadata_columns:
       - bronze_ingestion_ts
       - ingestion_date
@@ -92,8 +100,7 @@ bronze_entities:
     layer_name: "Bronze"
     columns: ["product_id", "product_name", "category", "sub_category"]
     business_key: "product_id"
-    partition_col: "bronze_ingestion_ts"
-    z_order_columns: ["product_id"]
+    cluster_by_columns: ["bronze_ingestion_ts", "product_id"]
     metadata_columns:
       - bronze_ingestion_ts
       - ingestion_date
@@ -111,8 +118,7 @@ bronze_entities:
     layer_name: "Bronze"
     columns: ["order_id", "customer_id", "order_date", "ship_date", "ship_mode"]
     business_key: "order_id"
-    partition_col: "bronze_ingestion_ts"
-    z_order_columns: ["order_id", "customer_id"]
+    cluster_by_columns: ["bronze_ingestion_ts", "order_id"]
     metadata_columns:
       - bronze_ingestion_ts
       - ingestion_date
@@ -129,8 +135,7 @@ bronze_entities:
     layer_name: "Bronze"
     columns: ["order_id", "product_id", "sales", "quantity", "discount", "profit"]
     business_key: ["order_id", "product_id"]
-    partition_col: "bronze_ingestion_ts"
-    z_order_columns: ["order_id", "product_id"]
+    cluster_by_columns: ["bronze_ingestion_ts", "order_id", "product_id"]
     metadata_columns:
       - bronze_ingestion_ts
       - ingestion_date

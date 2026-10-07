@@ -5,16 +5,19 @@ Module: Bronze Entity Split – Superstore append
 Purpose:
     Incrementally splits Bronze raw data into multiple entity tables
     using append logic. Handles new and updated records while maintaining
-    idempotency and optimized partitioning.
+    idempotency.
 
 Key Features:
 1. Incremental append Logic:
     - Inserts new rows and updates existing rows based on configured business keys.
     - Ensures no duplicate data across repeated runs.
 
-2. Partitioning & table maintenance:
-    - Entity tables are partitioned by the column in `partition_col` in the
-      entity config (currently `bronze_ingestion_ts`).
+2. Table layout & maintenance:
+    - Entity tables are not partitioned. They use Liquid Clustering on the keys in
+      each entity's `cluster_by_columns`, applied by the orchestrator through
+      superstore_liquid_clustering; this module only appends. (They were once
+      partitioned on `bronze_ingestion_ts`, a timestamp, which made a new
+      partition of small files on every run.)
     - OPTIMIZE and VACUUM are left to Unity Catalog Predictive Optimization;
       this module runs no table maintenance of its own.
 
@@ -27,12 +30,11 @@ Key Features:
     - Logs warnings for table creation issues without stopping execution.
 
 5. Configuration-Driven:
-    - Entity table definitions, business keys, column selections and partition columns
+    - Entity table definitions, business keys, column selections and clustering keys
       are centralized for consistent and repeatable execution.
 
 Best Practices / Notes:
 - Avoid `.count()` on massive tables; use async metrics where possible.
-- Ensure partition columns exist and are consistent across pipelines.
 - Module is designed for serverless Databricks compute with minimal resource usage.
 ==============================================================
 """
@@ -493,7 +495,6 @@ def bronze_entity_incremental_append(
     )
 
     table_name = table(get_bronze_schema(), entity_cfg["table_name"].split('.')[-1])
-    partition_col = entity_cfg["partition_col"]
     all_columns = entity_cfg["columns"] + entity_cfg["metadata_columns"]
     source_table = table(get_bronze_schema(), entity_cfg["source_table"].split('.')[-1])
 
@@ -545,7 +546,6 @@ def bronze_entity_incremental_append(
     entity_df.write.format("delta") \
         .mode("append") \
         .option("mergeSchema", "true") \
-        .partitionBy(partition_col) \
         .saveAsTable(table_name)
 
     log_event(

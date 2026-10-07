@@ -23,7 +23,9 @@ partitioned by `ingestion_date` (they are partitioned by `bronze_ingestion_ts`).
 **Not changed:** the `z_order_cols` / `z_order_columns` keys in the Gold and Bronze
 configs. The Gold dimension orchestrator still uses the first `z_order_cols` entry as
 the table's partition column, and those keys are the input for the Liquid Clustering
-migration that follows this change.
+migration that follows this change. (Done in the next change: they became
+`cluster_by_columns` / `cluster_by_cols` — see
+[LIQUID_CLUSTERING_MIGRATION.md](LIQUID_CLUSTERING_MIGRATION.md).)
 
 ## Why
 

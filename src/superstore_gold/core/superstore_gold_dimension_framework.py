@@ -102,6 +102,7 @@ from pyspark.sql.types import (
 # -------------------------------
 from superstore_logger import get_superstore_logger, log_event  # centralized logging framework
 from superstore_platform_constants import GOLD_LAYER            # constant to enforce Gold layer naming consistency
+from superstore_liquid_clustering import converge_liquid_clustering  # table layout from config
 from superstore_backfill_utils import (                            # run-mode support
     get_incremental_with_backfill,
     run_mode_load_type
@@ -577,13 +578,18 @@ def create_gold_table_if_not_exists(
     layer: str,
     repaired_df,
     gold_tbl,
-    partition_column,
+    cluster_columns,
 ):
     """
-    Creates Delta Gold table in production-safe way:
+    Creates Delta Gold table in production-safe way, and keeps its layout:
     - Idempotent: does not overwrite existing table
-    - Partitions by relevant column for query performance
     - Minimal write (limit(0)) for schema-only table creation
+    - Liquid Clustering on `cluster_columns` (dim_config.cluster_by_cols), converged
+      on every run: a new table is clustered before its first MERGE, and a table
+      still partitioned from before is converted in place once (its partition
+      column is a STRING, which the in-place conversion supports). It replaces
+      PARTITIONED BY on the first key, which split a ~1M-row table into one
+      folder per region or category for no benefit.
     """
     log_event(
         logger_gold_dimensional,
@@ -595,9 +601,7 @@ def create_gold_table_if_not_exists(
     )
     try:
         if not spark.catalog.tableExists(gold_tbl):
-            repaired_df.limit(0).write.format("delta").mode("ignore").partitionBy(
-                partition_column
-            ).saveAsTable(gold_tbl)
+            repaired_df.limit(0).write.format("delta").mode("ignore").saveAsTable(gold_tbl)
             log_event(
                 logger_gold_dimensional,
                 "INFO",
@@ -615,11 +619,18 @@ def create_gold_table_if_not_exists(
                 layer_run_id=layer_run_id,
                 layer=GOLD_LAYER
             )
+        # Batch-only table (MERGE in, batch reads out), so a rewrite is permitted
+        # if an in-place conversion is ever refused.
+        converge_liquid_clustering(
+            spark, logger_gold_dimensional, gold_tbl, cluster_columns,
+            allow_rewrite=True,
+            master_run_id=master_run_id, layer_run_id=layer_run_id, layer=GOLD_LAYER
+        )
     except Exception as e:
         log_event(
             logger_gold_dimensional,
             "ERROR",
-            f"Failed to create Gold table {gold_tbl}: {e}",
+            f"Failed to create or cluster Gold table {gold_tbl}: {e}",
             master_run_id=master_run_id,
             layer_run_id=layer_run_id,
             layer=GOLD_LAYER

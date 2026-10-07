@@ -31,7 +31,7 @@ dim_config:
       region: region
     hash_column: gold_customers_hash_id
     # silver_hash_column: silver_customers_hash_id
-    z_order_cols:
+    cluster_by_cols:  # Liquid Clustering keys, at most 4 (superstore_liquid_clustering)
       - region
       - state
 
@@ -57,7 +57,7 @@ dim_config:
       sub_category: sub_category
     hash_column: gold_products_hash_id
     # silver_hash_column: silver_products_hash_id
-    z_order_cols:
+    cluster_by_cols:  # Liquid Clustering keys, at most 4 (superstore_liquid_clustering)
       - category
       - sub_category
 

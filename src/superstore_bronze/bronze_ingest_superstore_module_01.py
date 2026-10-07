@@ -20,10 +20,12 @@ Key Features:
 2. Metadata Enrichment:
     - Adds ingestion timestamp (`bronze_ingestion_ts`), ingestion date (`ingestion_date`),
       source file path, size, modification time, and sanitized column names.
-    - Enables auditability, reproducibility, and downstream partition pruning.
+    - Enables auditability, reproducibility, and downstream data skipping.
 
-3. Partitioning & Query Optimization:
-    - Partitioned by `ingestion_date` for cost-efficient serverless queries.
+3. Table Layout:
+    - Not partitioned. The table uses Liquid Clustering on the keys in the Bronze
+      config (`bronze_main.cluster_by_columns`), applied by the orchestrator through
+      superstore_liquid_clustering; this module only appends.
     - Column sanitization ensures valid Delta column names.
 
 4. Observability:
@@ -159,7 +161,7 @@ def sanitize_column(name: str) -> str:
 # Bronze Ingestion - Incremental Data Processing
 # -----------------------------
 # This function is responsible for ingesting raw CSV files from CloudFiles into the Bronze Delta table
-# incrementally, enriching them with metadata, renaming columns, and partitioning by ingestion date.
+# incrementally, enriching them with metadata and renaming columns.
 # It supports schema evolution to accommodate changes in the input data.
 
 
@@ -177,7 +179,7 @@ def bronze_ingest_incremental(
 ) -> DataFrame:
     """
     Ingests raw CSV data into the Bronze Delta table incrementally. The function adds necessary metadata columns,
-    sanitizes column names, and writes the enriched data into the Delta table, partitioned by ingestion date.
+    sanitizes column names, and appends the enriched data to the Delta table.
 
     Arguments:
         spark: Spark session object.
@@ -277,14 +279,14 @@ def bronze_ingest_incremental(
     # Step 3: Add Metadata Columns
     # -----------------------------
     # Enrich the DataFrame with metadata such as ingestion timestamp, file details, and custom metadata.
-    # These columns are useful for auditing, partitioning, and ensuring downstream processes can be optimized.
+    # These columns are useful for auditing and for incremental reads downstream (bronze_ingestion_ts).
     df_stream = (
         df_stream.withColumn(
             "bronze_ingestion_ts", current_timestamp()
         )  # Localize the timestamp
         .withColumn(
             "ingestion_date", to_date(col("bronze_ingestion_ts"))
-        )  # Extract the date for partitioning
+        )  # Ingestion date, kept for date-level queries and backfill windows
         .withColumn(
             "source_file_path", col("_metadata.file_path")
         )  # Store the source file path
@@ -443,8 +445,9 @@ def bronze_ingest_incremental(
     # -----------------------------
     # Step 5: Write Stream to Bronze Delta Table
     # -----------------------------
-    # The data is written incrementally to the Delta table. Partitioning is done by ingestion date
-    # to optimize querying and storage, especially for large datasets.
+    # The data is written incrementally to the Delta table. No partitionBy: the table
+    # is Liquid Clustered (see superstore_liquid_clustering), and a writer that
+    # declared partitions would conflict with that layout.
     query = (
         df_stream.writeStream.format("delta")
         .outputMode("append")  # Append the data to the existing table
@@ -453,9 +456,6 @@ def bronze_ingest_incremental(
         )  # Ensure checkpointing for fault tolerance
         .option("mergeSchema", "True")  # Support schema evolution for new columns
         .trigger(availableNow=True)  # Process the data as soon as it's available
-        .partitionBy(
-            "ingestion_date"
-        )  # Partition data by ingestion date for optimized querying
         .toTable(table_name)  # Write to the Delta table
     )
 

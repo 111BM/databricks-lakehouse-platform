@@ -83,6 +83,7 @@ from superstore_logger import get_superstore_logger, log_event
 
 # Platform constants (ensures consistent layer naming and governance rules)
 from superstore_platform_constants import GOLD_LAYER
+from superstore_liquid_clustering import converge_liquid_clustering  # table layout from config
 from superstore_backfill_utils import (                            # run-mode support
     get_incremental_with_backfill,
     run_mode_load_type
@@ -367,14 +368,18 @@ def prepare_fact_columns(df, master_run_id: str, entity_columns, hash_column:str
 # -----------------------------
 # 3. Create Gold Table if Not Exists
 # -----------------------------
-def create_gold_table_if_not_exists(df, gold_tbl, master_run_id: str, layer_run_id: str, layer: str):
+def create_gold_table_if_not_exists(df, gold_tbl, cluster_columns, master_run_id: str, layer_run_id: str, layer: str):
     """
     Checks if the Gold fact table exists. If not, creates an empty Delta Gold table to ensure
-    the merge operation works smoothly later in the pipeline.
+    the merge operation works smoothly later in the pipeline. Then converges the table to
+    Liquid Clustering on `cluster_columns` (fact_config.cluster_by_cols): a new table is
+    clustered before its first MERGE, an existing unpartitioned one gets the keys once
+    (metadata only). Before this, the keys were declared as `z_order_cols` and never used.
 
     Args:
         df (DataFrame): DataFrame that will be merged into Gold.
         gold_tbl (str): Name of the Gold table.
+        cluster_columns (list): Liquid Clustering keys, at most 4.
         log_event (logger_gold_facts): log_event instance to track the process.
     """
     log_event(
@@ -404,6 +409,13 @@ def create_gold_table_if_not_exists(df, gold_tbl, master_run_id: str, layer_run_
             layer_run_id=layer_run_id,
             layer=GOLD_LAYER,
         )
+    # Batch-only table (MERGE in, batch reads out), so a rewrite is permitted if an
+    # in-place conversion is ever refused.
+    converge_liquid_clustering(
+        df.sparkSession, logger_gold_facts, gold_tbl, cluster_columns,
+        allow_rewrite=True,
+        master_run_id=master_run_id, layer_run_id=layer_run_id, layer=GOLD_LAYER
+    )
 
 
 # -----------------------------

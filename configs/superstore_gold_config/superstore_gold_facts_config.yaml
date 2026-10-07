@@ -24,7 +24,7 @@ fact_table_configs:
     hash_column: gold_orders_hash_id
     meta_columns:
       - silver_ingestion_ts
-    z_order_cols:
+    cluster_by_cols:  # Liquid Clustering keys, at most 4 (superstore_liquid_clustering)
       - customer_id
       - order_date
 
@@ -50,7 +50,10 @@ fact_table_configs:
     hash_column: gold_sales_hash_id
     meta_columns:
       - silver_ingestion_ts
-    z_order_cols:
-      - customer_id
+    # The MERGE keys. This fact has no customer_id: the old z_order_cols listed it,
+    # and nobody noticed because the Z-order helper never ran. Now that the keys
+    # are applied, a missing column fails the run by name.
+    cluster_by_cols:  # Liquid Clustering keys, at most 4 (superstore_liquid_clustering)
+      - order_id
       - product_id
 
