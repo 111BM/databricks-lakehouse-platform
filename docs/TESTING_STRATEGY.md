@@ -35,11 +35,68 @@ seed dirty data → run REAL pipeline (SUPERSTORE_ENV=integration_test)
 
 Everything runs against isolated `integration_test_*` schemas and a dedicated volume — dev/qa/prod data is never touched. A failed assertion fails the job, which fails CI.
 
-![Integration test job DAG on Databricks Serverless](images/integration_tests_DAG.png)
+The `superstore_integration_test` job, drawn from [integration_test_job.job.yml](../resources/integration_test_job.job.yml) — 21 tasks; hexagons are assertions. The pipeline runs twice (initial load, then changed data with a new source column), then the window is replayed twice through Silver and Gold to prove re-derivation is idempotent.
 
-*The `superstore_integration_test` job: the real pipeline run twice (initial load, then an SCD2 change), asserting every layer in between.*
+```mermaid
+flowchart TD
+    subgraph P0["Reset and seed"]
+        reset_environment["reset_environment"]
+        seed_initial_data["seed_initial_data"]
+    end
+    subgraph P1["Load 1 — initial load, assert every layer"]
+        run_pipeline_initial_load["run_pipeline_initial_load"]
+        assert_bronze{{"assert_bronze"}}
+        assert_silver{{"assert_silver"}}
+        assert_gold_dim{{"assert_gold_dim"}}
+        assert_gold_fact{{"assert_gold_fact"}}
+    end
+    subgraph P2["Load 2 — changed data plus a new source column"]
+        seed_changed_data["seed_changed_data"]
+        run_pipeline_incremental_load["run_pipeline_incremental_load"]
+        assert_scd2_change{{"assert_scd2_change"}}
+        assert_schema_drift{{"assert_schema_drift"}}
+    end
+    subgraph P3["Replay the window twice — Silver and Gold only"]
+        snapshot_before_replay["snapshot_before_replay"]
+        superstore_pipeline_master_run_id_init["superstore_pipeline_master_run_id_init"]
+        replay_1_silver["replay_1_silver"]
+        replay_1_gold_dims["replay_1_gold_dims"]
+        replay_1_gold_facts["replay_1_gold_facts"]
+        snapshot_after_replay_1["snapshot_after_replay_1"]
+        replay_2_silver["replay_2_silver"]
+        replay_2_gold_dims["replay_2_gold_dims"]
+        replay_2_gold_facts["replay_2_gold_facts"]
+        assert_replay{{"assert_replay"}}
+    end
+    reset_environment --> seed_initial_data
+    seed_initial_data --> run_pipeline_initial_load
+    run_pipeline_initial_load --> assert_bronze
+    run_pipeline_initial_load --> assert_silver
+    run_pipeline_initial_load --> assert_gold_dim
+    run_pipeline_initial_load --> assert_gold_fact
+    assert_bronze --> seed_changed_data
+    assert_silver --> seed_changed_data
+    assert_gold_dim --> seed_changed_data
+    assert_gold_fact --> seed_changed_data
+    seed_changed_data --> run_pipeline_incremental_load
+    run_pipeline_incremental_load --> assert_scd2_change
+    run_pipeline_incremental_load --> assert_schema_drift
+    assert_scd2_change --> snapshot_before_replay
+    snapshot_before_replay --> superstore_pipeline_master_run_id_init
+    superstore_pipeline_master_run_id_init --> replay_1_silver
+    replay_1_silver --> replay_1_gold_dims
+    replay_1_silver --> replay_1_gold_facts
+    replay_1_gold_dims --> snapshot_after_replay_1
+    replay_1_gold_facts --> snapshot_after_replay_1
+    snapshot_after_replay_1 --> replay_2_silver
+    superstore_pipeline_master_run_id_init --> replay_2_silver
+    replay_2_silver --> replay_2_gold_dims
+    replay_2_silver --> replay_2_gold_facts
+    replay_2_gold_dims --> assert_replay
+    replay_2_gold_facts --> assert_replay
+```
 
-*The screenshot predates two changes and is left rather than retaken, since the DAG shape it shows is still the point. It depicts the **old** replay legs — two further full-pipeline invocations, since removed — and a trailing `cleanup` task that no longer exists; the environment is now reset at the start instead. Measured timings: **56.2 min** before scoping the replay legs, **36.6 min** after.*
+*A diagram rather than a screenshot: Databricks draws the 21 tasks as one long row that is unreadable at any size that fits a page, and the screenshot this replaced had gone stale — it still showed replay legs and a `cleanup` task that no longer exist. When the job changes, update this diagram in the same commit. Measured timings: **56.2 min** before scoping the replay legs, **36.6 min** after.*
 
 ```bash
 databricks bundle run superstore_integration_test --target qa
