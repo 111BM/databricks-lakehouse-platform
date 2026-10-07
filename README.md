@@ -24,18 +24,16 @@ The dataset is small on purpose. The point is the platform engineering around it
 ## Architecture
 
 ```mermaid
-flowchart LR
-    subgraph SRC[Source]
-        FEED[Vendor feed<br/>GitHub Datasets repo]
-    end
+flowchart TB
+    FEED[Vendor feed<br/>GitHub Datasets repo]
 
     subgraph BRONZE[Bronze]
         RAW[superstore_raw<br/>Auto Loader]
-        ENT[customers · products<br/>orders · sales]
+        ENT[customers, products,<br/>orders, sales]
     end
 
     subgraph SILVER[Silver]
-        DQ{Data quality<br/>rules}
+        DQ{Data-quality<br/>rules}
         SLV[Silver entities<br/>latest wins, MERGE]
         QUA[Quarantine<br/>named violations]
         AUD[Audit<br/>duplicates]
@@ -53,7 +51,7 @@ flowchart LR
     end
 
     subgraph OBS[Observability]
-        CHK[(data_quality_checks<br/>schema_drift · layer metrics)]
+        CHK[(Data-quality checks<br/>schema drift<br/>layer metrics)]
         ALR[SQL Alerts]
         NOTIFY[Email + Slack]
     end
@@ -63,9 +61,10 @@ flowchart LR
     DQ -->|invalid key| QUA
     SLV -.->|duplicate losers| AUD
     SLV --> DIM & FCT
-    DIM & FCT --> MART --> KPI
-    DIM & FCT --> FEAT
-    SLV & MART -.->|reconciliation, orphans,<br/>placeholder exposure| CHK
+    DIM & FCT --> MART & FEAT
+    MART --> KPI
+    SLV -.->|reconciliation| CHK
+    MART -.->|orphans, placeholders| CHK
     CHK --> ALR --> NOTIFY
 ```
 

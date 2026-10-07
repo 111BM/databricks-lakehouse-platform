@@ -40,32 +40,32 @@ The `superstore_integration_test` job, drawn from [integration_test_job.job.yml]
 ```mermaid
 flowchart TD
     subgraph P0["Reset and seed"]
-        reset_environment["reset_environment"]
-        seed_initial_data["seed_initial_data"]
+        reset_environment["reset_<br/>environment"]
+        seed_initial_data["seed_initial_<br/>data"]
     end
-    subgraph P1["Load 1 — initial load, assert every layer"]
-        run_pipeline_initial_load["run_pipeline_initial_load"]
+    subgraph P1["Load 1: initial load"]
+        run_pipeline_initial_load["run_pipeline_<br/>initial_load"]
         assert_bronze{{"assert_bronze"}}
         assert_silver{{"assert_silver"}}
-        assert_gold_dim{{"assert_gold_dim"}}
-        assert_gold_fact{{"assert_gold_fact"}}
+        assert_gold_dim{{"assert_gold_<br/>dim"}}
+        assert_gold_fact{{"assert_gold_<br/>fact"}}
     end
-    subgraph P2["Load 2 — changed data plus a new source column"]
-        seed_changed_data["seed_changed_data"]
-        run_pipeline_incremental_load["run_pipeline_incremental_load"]
-        assert_scd2_change{{"assert_scd2_change"}}
-        assert_schema_drift{{"assert_schema_drift"}}
+    subgraph P2["Load 2: changed data"]
+        seed_changed_data["seed_changed_<br/>data"]
+        run_pipeline_incremental_load["run_pipeline_<br/>incremental_<br/>load"]
+        assert_scd2_change{{"assert_scd2_<br/>change"}}
+        assert_schema_drift{{"assert_<br/>schema_drift"}}
     end
-    subgraph P3["Replay the window twice — Silver and Gold only"]
-        snapshot_before_replay["snapshot_before_replay"]
-        superstore_pipeline_master_run_id_init["superstore_pipeline_master_run_id_init"]
-        replay_1_silver["replay_1_silver"]
-        replay_1_gold_dims["replay_1_gold_dims"]
-        replay_1_gold_facts["replay_1_gold_facts"]
-        snapshot_after_replay_1["snapshot_after_replay_1"]
-        replay_2_silver["replay_2_silver"]
-        replay_2_gold_dims["replay_2_gold_dims"]
-        replay_2_gold_facts["replay_2_gold_facts"]
+    subgraph P3["Replay twice: Silver + Gold"]
+        snapshot_before_replay["snapshot_<br/>before_replay"]
+        superstore_pipeline_master_run_id_init["superstore_<br/>pipeline_<br/>master_run_<br/>id_init"]
+        replay_1_silver["replay_1_<br/>silver"]
+        replay_1_gold_dims["replay_1_<br/>gold_dims"]
+        replay_1_gold_facts["replay_1_<br/>gold_facts"]
+        snapshot_after_replay_1["snapshot_<br/>after_<br/>replay_1"]
+        replay_2_silver["replay_2_<br/>silver"]
+        replay_2_gold_dims["replay_2_<br/>gold_dims"]
+        replay_2_gold_facts["replay_2_<br/>gold_facts"]
         assert_replay{{"assert_replay"}}
     end
     reset_environment --> seed_initial_data
