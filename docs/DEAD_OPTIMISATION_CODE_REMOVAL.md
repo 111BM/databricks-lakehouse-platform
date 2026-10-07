@@ -1,7 +1,8 @@
 # Dead Optimisation Code Removal — the pipeline claims only the optimisations it runs
 
-> **Status (2026-10-07): code removed; verification pending** (dev run, then qa
-> integration suite, then prod). About 360 lines deleted, no behaviour changed.
+> **Status (2026-10-07): done.** About 360 lines deleted, no behaviour changed. Verified
+> by dev run `703254340844608`, qa integration run `706611561305372` and prod run
+> `261598367632046`, all green.
 
 ## What
 
@@ -102,7 +103,7 @@ Clustering keys.
 
 ## Verification
 
-- [ ] Unit tests green locally and in CI
-- [ ] dev job run green
-- [ ] qa integration suite green
-- [ ] prod deploy, next scheduled run green
+- [x] Unit tests green locally and in CI
+- [x] dev job run green (`703254340844608`)
+- [x] qa integration suite green (`706611561305372`)
+- [x] prod deploy, run green (`261598367632046`)

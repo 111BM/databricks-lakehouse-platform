@@ -1,6 +1,8 @@
 # Liquid Clustering Migration — from Hive partitions to a layout the pipeline converges
 
-> **Status (2026-10-07): dev fully migrated and verified.** qa and prod pending. See [Verification](#verification).
+> **Status (2026-10-07): complete in every environment.** dev and prod fully migrated
+> (prod Bronze on run `261598367632046`, prod Gold on replay `710265257759139`); qa
+> creates its tables clustered. See [Verification](#verification).
 
 ## What
 
@@ -179,9 +181,32 @@ in the numbers: with a weekly delivery it adds 52 never-merged partitions per ta
 per year, indefinitely. The migration removes it before it shows, rather than after a
 slowdown — so this change has no runtime headline, and should not be presented as one.
 
-### prod — after
+### prod — after (2026-10-07, run `261598367632046`, as `superstore-ci-prod`, 5 min, green)
 
-_Pending: the first run after deploy._
+| Table | After | Table id |
+|---|---|---|
+| `superstore_raw` | clustering `[bronze_ingestion_ts]`, 3 files | `04c1212c` — **unchanged** (in place; Auto Loader unaffected) |
+| `customers` | clustering `[bronze_ingestion_ts, customer_id]`, **1 file** (was 3) | new (rewritten) |
+| `orders` | clustering `[bronze_ingestion_ts, order_id]`, 1 file | new |
+| `products` | clustering `[bronze_ingestion_ts, product_id]`, 1 file | new |
+| `sales` | clustering `[bronze_ingestion_ts, order_id, product_id]`, 1 file | new |
+
+Row counts unchanged (1,010,534 per Bronze table). Reconciliation balanced on all four
+entities, zero orphaned facts, all five prod alerts OK afterwards. The Bronze task took
+102 s including the one-time rewrite. Grants are held at schema level and were unaffected.
+
+Gold had no new rows on that run, so it was converted by a replay of the last delivery's
+window (`run_mode=replay`, 2026-10-01; run `710265257759139`, 7 min, green). A replay
+re-derives Silver and Gold from Bronze and is idempotent, so it changes no data:
+
+| Table | After | Table id |
+|---|---|---|
+| `dim_customers` | clustering `[region, state]` (was partitions `[region]`), 87,938 rows | `a5eb0c6a` — unchanged (in place) |
+| `dim_products` | clustering `[category, sub_category]` (was `[category]`), 52,050 rows | `31bdd09b` — unchanged |
+| `facts_orders` | clustering `[customer_id, order_date]`, 841,923 rows | `11aa45cc` — unchanged |
+| `facts_sales` | clustering `[order_id, product_id]`, 995,038 rows | `9215a785` — unchanged |
+
+Row counts identical to before; all DQ checks passed and all five prod alerts OK.
 
 ## A bug the migration found
 
@@ -223,5 +248,6 @@ half-done: `facts_orders` had been clustered correctly and `facts_sales` was unt
 - [x] Unit tests: 288 passed (17 new)
 - [x] dev Bronze: converted, rows unchanged, raw table id unchanged
 - [x] dev Gold: dimensions converted in place, fact keys set, all DQ checks passed
-- [ ] qa integration suite green (create path)
-- [ ] prod: deploy, first run green, before/after recorded above, all alerts OK
+- [x] qa integration suite green, run `1056823645949824`; its fresh tables were created clustered
+- [x] prod: deployed, run `261598367632046` green, Bronze converted, before/after recorded above, all alerts OK
+- [x] prod Gold: converted by replay `710265257759139`, rows unchanged, all checks and alerts OK
