@@ -70,7 +70,7 @@ flowchart TB
 
 ![Production job DAG on Databricks Serverless](docs/images/prod_pipeline_DAG.png)
 
-*The production job: 18 tasks from source acquisition through Bronze, Silver and Gold to marts, features and KPI views. The same DAG runs in dev, qa and prod; only `SUPERSTORE_ENV` differs.*
+*A production run on 2026-10-07 (run `710265257759139`, 7 min 50 s, all 18 tasks green, as the prod service principal): source acquisition through Bronze, Silver and Gold to marts, features and KPI views. The same DAG runs in dev, qa and prod; only `SUPERSTORE_ENV` differs.*
 
 Layer by layer, the cross-cutting design (config-driven contracts, environment isolation, run modes, observability) and the repository layout: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 

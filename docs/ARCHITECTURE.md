@@ -79,12 +79,16 @@ tests/
 
 ## About the pipeline screenshot
 
-*Screenshot captured 2026-08-02, and worth being precise about what it shows: the DAG
-shape, not a productive run. Prod had no source file until 2026-08-16, so every green run
-before that date — including this one — ran 18 tasks over an empty landing volume and
-produced nothing. That is the defect described in
-[Defects found by measurement](DEFECTS_FOUND_BY_MEASUREMENT.md), and it is
-left visible here rather than swapped for a flattering screenshot. The first prod run to
+The README screenshot is prod run `710265257759139` on 2026-10-07: all 18 tasks green in
+7 min 50 s, under the `superstore-ci-prod` service principal. It was a `replay` of the
+2026-10-01 window — the run that converted the Gold tables to Liquid Clustering
+([LIQUID_CLUSTERING_MIGRATION.md](LIQUID_CLUSTERING_MIGRATION.md)) — so Bronze exits early
+in it (6 s); in a normal incremental run with new data Bronze takes minutes.
+
+It replaced a screenshot from 2026-08-02 that showed the same DAG shape over an **empty**
+landing volume: prod had no source file until 2026-08-16, so every green run before then
+processed nothing — the defect described in
+[Defects found by measurement](DEFECTS_FOUND_BY_MEASUREMENT.md). The first prod run to
 carry real data completed **2026-08-16 in 5.6 min**: 18/18 tasks, 92 source rows, four
 Silver entities at `run_status = 'SUCCESS'`, reconciliation balanced on all four, zero
-orphaned facts.*
+orphaned facts.
