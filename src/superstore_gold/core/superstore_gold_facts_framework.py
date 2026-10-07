@@ -27,8 +27,8 @@ Key Features:
     - Computes throughput and skew ratios for better observability of pipeline performance.
 
 4. Table Maintenance:
-    - OPTIMIZE and VACUUM are handled by Unity Catalog Predictive Optimization.
-      `optimize_gold_table` and `vacuum_gold_table` predate it and are deliberately not called.
+    - OPTIMIZE and VACUUM are handled by Unity Catalog Predictive Optimization, which is
+      enabled at the metastore level; this module runs no table maintenance of its own.
 
 5. Serverless Compatibility:
     - Fully DataFrame-based pipeline; no cache()/persist(), which Serverless forbids.
@@ -801,108 +801,6 @@ def collect_fact_metrics(
         logger_gold_facts,
         "INFO",
         f"Fact metrics recorded | " f"read={read_rows}, inserted={inserted_rows}, updated={updated_rows}",
-        master_run_id=master_run_id,
-        layer_run_id=layer_run_id,
-        layer=GOLD_LAYER,
-    )
-
-
-# -----------------------------
-# 6. Optimize Gold Table
-# -----------------------------
-def optimize_gold_table(spark, gold_tbl, z_order_cols, master_run_id: str, layer_run_id: str, layer: str):
-    """
-    Optimizes the Delta Gold table using Z-Ordering on key columns to enhance query performance.
-    Z-Ordering improves partition pruning during query execution.
-
-    NOT wired into the pipeline. Predictive Optimization is enabled at the
-    metastore level, so OPTIMIZE already runs automatically on these Unity
-    Catalog managed tables. Kept for workspaces without PO; where PO is
-    available, Liquid Clustering (CLUSTER BY) is the better route.
-
-    Args:
-        spark (SparkSession): Active Spark session.
-        gold_tbl (str): Name of the Gold table to optimize.
-        z_order_cols (list): List of columns to apply Z-Ordering on.
-        log_event (logger_gold_facts): log_event instance to track progress.
-    """
-    log_event(
-        logger_gold_facts,
-        "INFO",
-        f"Optimizing {gold_tbl} using ZORDER BY {z_order_cols}",
-        master_run_id=master_run_id,
-        layer_run_id=layer_run_id,
-        layer=GOLD_LAYER,
-    )
-
-    if not spark.catalog.tableExists(gold_tbl):
-        log_event(
-            logger_gold_facts,
-            "WARN",
-            f"Gold table {gold_tbl} does not exist. Skipping z-odering operation.",
-            master_run_id=master_run_id,
-            layer_run_id=layer_run_id,
-            layer=GOLD_LAYER,
-        )
-        return
-    spark.sql(f"OPTIMIZE {gold_tbl} ZORDER BY ({','.join(z_order_cols)})")  # Perform Z-Ordering for optimization
-    log_event(
-        logger_gold_facts,
-        "INFO",
-        f"Optimization completed for {gold_tbl}",
-        master_run_id=master_run_id,
-        layer_run_id=layer_run_id,
-        layer=GOLD_LAYER,
-    )
-
-
-# -----------------------------
-# 7. Vacuum Gold Table
-# -----------------------------
-def vacuum_gold_table(spark, gold_tbl, master_run_id: str, layer_run_id: str, layer: str, retention_hours=168):
-    """
-    Performs a Delta VACUUM operation to remove stale files after a specified retention period.
-    This step helps in cleaning up files and improving storage efficiency.
-
-    NOT wired into the pipeline. Predictive Optimization is enabled at the
-    metastore level and already vacuums these Unity Catalog managed tables at
-    the same 168-hour default. Kept for workspaces without PO.
-
-    Args:
-        spark (SparkSession): Active Spark session.
-        gold_tbl (str): Name of the Gold table to vacuum.
-        retention_hours (int): Number of hours to retain old data (default is 168 hours).
-        log_event (logger_gold_facts): log_event instance to track the operation.
-
-    Returns:
-        None
-    """
-    log_event(
-        logger_gold_facts,
-        "INFO",
-        f"Vacuuming {gold_tbl}, retention={retention_hours} hours",
-        master_run_id=master_run_id,
-        layer_run_id=layer_run_id,
-        layer=GOLD_LAYER,
-    )
-
-    if not spark.catalog.tableExists(gold_tbl):
-        log_event(
-            logger_gold_facts,
-            "WARN",
-            f"Gold table {gold_tbl} does not exist. Skipping vacuuming operation.",
-            master_run_id=master_run_id,
-            layer_run_id=layer_run_id,
-            layer=GOLD_LAYER,
-        )
-        return
-
-    spark.sql(f"VACUUM {gold_tbl} RETAIN {retention_hours} HOURS")  # Clean up old files from Delta table
-
-    log_event(
-        logger_gold_facts,
-        "INFO",
-        f"Vacuum completed for {gold_tbl}",
         master_run_id=master_run_id,
         layer_run_id=layer_run_id,
         layer=GOLD_LAYER,

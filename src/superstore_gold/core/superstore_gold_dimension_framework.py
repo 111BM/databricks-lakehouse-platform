@@ -8,8 +8,7 @@ Purpose:
     - Incrementally loads new data from the Silver table into the Gold table based on the `silver_ingestion_ts`.
     - Applies Slowly Changing Dimension Type 2 (SCD2) logic for capturing historical data changes, ensuring accurate tracking of data changes over time.
     - Performs an idempotent merge from Silver to Gold using Delta Lake's `MERGE` operation, ensuring no data duplication and maintaining data integrity.
-    - Handles dynamic partitioning and repartitioning for better performance with large datasets.
-    - Leaves OPTIMIZE and VACUUM to Unity Catalog Predictive Optimization (see `optimize_gold_table`).
+    - Leaves OPTIMIZE and VACUUM to Unity Catalog Predictive Optimization.
     - Collects performance metrics for observability, including row counts and processing time.
 
 Key Features:
@@ -26,9 +25,9 @@ Key Features:
     - The operation ensures that only updated or new records are inserted, and old records are marked as expired.
 
 4. Performance Optimization:
-    - The pipeline dynamically repartitions data to optimize memory usage and performance.
-    - Large merges are split into hash-assigned buckets (`max_rows_per_bucket`).
-    - OPTIMIZE and VACUUM are handled by Predictive Optimization; the helpers here are deliberately not called.
+    - Change detection by row hash: unchanged rows are never rewritten.
+    - OPTIMIZE and VACUUM are handled by Unity Catalog Predictive Optimization, which is
+      enabled at the metastore level; this module runs no table maintenance of its own.
 
 5. Metrics Collection:
     - Tracks various metrics, including the number of rows read, inserted, updated, unchanged, and soft-deleted.
@@ -640,15 +639,11 @@ def merge_into_gold_table_scd2(
     gold_tbl,
     entity_id_column,
     hash_column,
-    max_rows_per_bucket=1000000,
 ):
     """
     Production-grade SCD2 merge for Delta Gold table:
-    - Handles large tables via bucketed merges to avoid memory issues
     - Idempotent: updates effective_to and is_current safely
     - Tracks run_id for observability and debugging
-    - Uses hash-based bucket assignment for string-safe partitioning
-    - Logs per-bucket progress for auditability
     """
     log_event(
         logger_gold_dimensional,
@@ -923,7 +918,6 @@ def collect_metrics(
     start_ts,
     end_ts,
     duration_secs,
-    max_rows_per_bucket: int,
     backfill_config: dict = None,
 ):
     """
@@ -1198,109 +1192,6 @@ def collect_metrics(
         "INFO",
         f"SCD2 Metrics | new={inserted_rows}, updated={updated_rows}, "
         f"current={active_rows}",
-        master_run_id=master_run_id,
-        layer_run_id=layer_run_id,
-        layer=GOLD_LAYER
-    )
-
-
-# -----------------------------
-# 9. Optimize and Vacuum Gold Table
-# -----------------------------
-def optimize_gold_table(spark, gold_tbl, z_order_cols, master_run_id: str, layer_run_id: str, layer: str):
-    """
-    Optimizes Gold table for query performance using Z-Ordering on the
-    clustering columns declared in dim_config (`z_order_cols`).
-
-    NOT wired into the pipeline. Predictive Optimization is enabled at the
-    metastore level, so OPTIMIZE/VACUUM already run automatically on these
-    Unity Catalog managed tables. Kept for workspaces without PO; where PO is
-    available, Liquid Clustering (CLUSTER BY) is the better route than a
-    scheduled ZORDER job.
-
-    This previously Z-ordered by the SCD2 hash column, which cannot benefit
-    from data skipping: hash values are uniformly distributed, so every file's
-    min/max spans the whole range and no file is ever pruned. Real queries
-    filter on region/state/natural keys - which is what dim_config already
-    declares. Signature now matches the facts framework equivalent.
-
-    Args:
-        spark (SparkSession): Active Spark session.
-        gold_tbl (str): Name of the Gold table to optimize.
-        z_order_cols (list): Columns to Z-Order on (dim_config.z_order_cols).
-    """
-    log_event(
-        logger_gold_dimensional,
-        "INFO",
-        f"Starting to optimize Gold table {gold_tbl} for performance.",
-        master_run_id=master_run_id,
-        layer_run_id=layer_run_id,
-        layer=GOLD_LAYER
-    )
-
-    if not spark.catalog.tableExists(gold_tbl):
-        log_event(
-            logger_gold_dimensional,
-            "WARN",
-            f"Gold table {gold_tbl} does not exist. Skipping z-odering operation.",
-            master_run_id=master_run_id,
-            layer_run_id=layer_run_id,
-            layer=GOLD_LAYER
-        )
-        return
-
-
-    if z_order_cols:
-        spark.sql(f"OPTIMIZE {gold_tbl} ZORDER BY ({','.join(z_order_cols)})")
-    else:
-        spark.sql(f"OPTIMIZE {gold_tbl}")
-    log_event(
-        logger_gold_dimensional,
-        "INFO",
-        f"Successfully optimized Gold table {gold_tbl}.",
-        master_run_id=master_run_id,
-        layer_run_id=layer_run_id,
-        layer=GOLD_LAYER
-    )
-
-
-def vacuum_gold_table(spark, master_run_id: str, layer_run_id: str, layer: str, gold_tbl):
-    """
-    Vacuums Gold table to remove stale/deleted data:
-    - Retains 168 hours to ensure safety against late-arriving data
-    - Frees up storage while keeping historical snapshots intact
-
-    NOT wired into the pipeline. Predictive Optimization is enabled at the
-    metastore level and already vacuums these Unity Catalog managed tables
-    (also at the 168-hour default, so time travel beyond ~7 days is already
-    unavailable). Kept for workspaces without PO.
-    """
-    log_event(
-        logger_gold_dimensional,
-        "INFO",
-        f"Starting to vacuum Gold table {gold_tbl} to remove stale data.",
-        master_run_id=master_run_id,
-        layer_run_id=layer_run_id,
-        layer=GOLD_LAYER
-    )
-
-    if not spark.catalog.tableExists(gold_tbl):
-        log_event(
-            logger_gold_dimensional,
-            "WARN",
-            f"Gold table {gold_tbl} does not exist. Skipping vacuuming operation.",
-            master_run_id=master_run_id,
-            layer_run_id=layer_run_id,
-            layer=GOLD_LAYER
-        )
-        return
-
-
-    spark.sql(f"VACUUM {gold_tbl} RETAIN 168 HOURS")
-    log_event(
-        logger_gold_dimensional,
-        "INFO",
-        f"Successfully vacuumed Gold table {gold_tbl}.",
         master_run_id=master_run_id,
         layer_run_id=layer_run_id,
         layer=GOLD_LAYER

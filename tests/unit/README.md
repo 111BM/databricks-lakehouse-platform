@@ -56,10 +56,10 @@ pipeline on seeded data), not here.
 |-------|--------|--------------------|------------------------|
 | Shared | backfill_utils | `get_backfill_config` ✅ | `get_incremental_with_backfill` (reads tables) |
 | Bronze | 01 ingest | `sanitize_column` ✅ | `bronze_ingest_incremental` (Auto Loader, Delta write) |
-| Bronze | 02 entity split | — (module reads a YAML at import + all funcs do table I/O) | `bronze_entity_incremental_append`, `collect_entity_metrics`, `get_last_processed_ts`, `optimize_zorder_bronze_tables` |
+| Bronze | 02 entity split | — (module reads a YAML at import + all funcs do table I/O) | `bronze_entity_incremental_append`, `collect_entity_metrics`, `get_last_processed_ts` |
 | Silver | silver_module | `deduplicate_latest_wins` ✅, `row_hash` ✅, `clean_string_columns` ✅, `add_error_columns` ✅, `add_is_valid` ✅ | `bronze_to_silver_prod` shell (read/merge/write), `write_etl_metrics`; the bespoke `ship_date<order_date` rule stays inline |
-| Gold | dimension | `compute_scd2_timeline` ✅ | `read_silver_table`, `merge_into_gold_table_scd2`, `handle_soft_deletes`, `collect_metrics`, optimize/vacuum |
-| Gold | facts | `prepare_fact_columns` ✅ | `get_incremental_silver_for_facts`, `merge_fact_into_gold`, `collect_fact_metrics`, optimize/vacuum |
+| Gold | dimension | `compute_scd2_timeline` ✅ | `read_silver_table`, `merge_into_gold_table_scd2`, `handle_soft_deletes`, `collect_metrics` |
+| Gold | facts | `prepare_fact_columns` ✅ | `get_incremental_silver_for_facts`, `merge_fact_into_gold`, `collect_fact_metrics` |
 
 ### Why some functions aren't here
 - **Bronze module 02** loads `superstore_bronze_config.yaml` at *import time* and

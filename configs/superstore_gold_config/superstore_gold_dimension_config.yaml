@@ -34,7 +34,6 @@ dim_config:
     z_order_cols:
       - region
       - state
-    max_rows_per_bucket: 1000000
 
   products:
     layer_name: Gold
@@ -61,5 +60,4 @@ dim_config:
     z_order_cols:
       - category
       - sub_category
-    max_rows_per_bucket: 1000000
 

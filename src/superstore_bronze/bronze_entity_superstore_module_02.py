@@ -12,9 +12,11 @@ Key Features:
     - Inserts new rows and updates existing rows based on configured business keys.
     - Ensures no duplicate data across repeated runs.
 
-2. Partitioning & Optional Z-Ordering:
-    - Entity tables partitioned by `ingestion_date`.
-    - Optional Z-Order for selective query acceleration on key lookup columns.
+2. Partitioning & table maintenance:
+    - Entity tables are partitioned by the column in `partition_col` in the
+      entity config (currently `bronze_ingestion_ts`).
+    - OPTIMIZE and VACUUM are left to Unity Catalog Predictive Optimization;
+      this module runs no table maintenance of its own.
 
 3. Observability:
     - Structured JSON logging with `run_id`, timestamps, table names, and row counts.
@@ -22,15 +24,14 @@ Key Features:
 
 4. Error Handling & Resilience:
     - Safe to rerun without affecting existing data.
-    - Logs warnings for Z-Order failures or table creation issues without stopping execution.
+    - Logs warnings for table creation issues without stopping execution.
 
 5. Configuration-Driven:
-    - Entity table definitions, business keys, column selections, and Z-Order columns
+    - Entity table definitions, business keys, column selections and partition columns
       are centralized for consistent and repeatable execution.
 
 Best Practices / Notes:
 - Avoid `.count()` on massive tables; use async metrics where possible.
-- Optimize and Z-Order large entity tables during off-peak hours.
 - Ensure partition columns exist and are consistent across pipelines.
 - Module is designed for serverless Databricks compute with minimal resource usage.
 ==============================================================
@@ -560,110 +561,3 @@ def bronze_entity_incremental_append(
         "entity_df": entity_df,
         "load_type" : load_type
     }
-  
-
-def optimize_zorder_bronze_tables(
-    spark,
-    entity_name: str,
-    entity_table_name: str,
-    z_order_cols: list,
-    master_run_id: str,
-    layer_run_id: str
-):
-    """
-    Optimizes a single Bronze table and applies Z-Order if configured.
-    Assumes fully qualified table name is passed from orchestrator.
-
-    NOT wired into the pipeline. Predictive Optimization is enabled at the
-    metastore level, so OPTIMIZE already runs automatically on these Unity
-    Catalog managed tables. Kept for workspaces without PO.
-    """
-
-    log_event(
-        logger_bronze_entity,
-        "INFO",
-        f"Starting optimize for {entity_name}",
-        table=entity_table_name,
-        master_run_id=master_run_id,
-        layer_run_id=layer_run_id,
-        layer=BRONZE_LAYER
-    )
-
-    # -------------------------------
-    # Check table exists
-    # -------------------------------
-    if not spark.catalog.tableExists(entity_table_name):
-        log_event(
-            logger_bronze_entity,
-            "WARNING",
-            f"Skipping optimize. Table not found: {entity_table_name}",
-            table=entity_table_name,
-            entity_name=entity_name,
-            master_run_id=master_run_id,
-            layer_run_id=layer_run_id,
-            layer=BRONZE_LAYER
-        )
-        return
-
-    # -------------------------------
-    # OPTIMIZE
-    # -------------------------------
-    try:
-        spark.sql(f"OPTIMIZE {entity_table_name}")
-
-        log_event(
-            logger_bronze_entity,
-            "INFO",
-            "Delta table optimized",
-            table=entity_table_name,
-            entity_name=entity_name,
-            master_run_id=master_run_id,
-            layer_run_id=layer_run_id,
-            layer=BRONZE_LAYER
-        )
-
-    except Exception as e:
-        log_event(
-            logger_bronze_entity,
-            "WARNING",
-            f"Optimize failed: {e}",
-            table=entity_table_name,
-            entity_name=entity_name,
-            master_run_id=master_run_id,
-            layer_run_id=layer_run_id,
-            layer=BRONZE_LAYER
-        )
-
-    # -------------------------------
-    # Z-ORDER
-    # -------------------------------
-    if z_order_cols:
-        try:
-            z_cols = ",".join(z_order_cols)
-
-            spark.sql(
-                f"OPTIMIZE {entity_table_name} ZORDER BY ({z_cols})"
-            )
-
-            log_event(
-                logger_bronze_entity,
-                "INFO",
-                f"Z-ordered by {z_cols}",
-                table=entity_table_name,
-                entity_name=entity_name,
-                master_run_id=master_run_id,
-                layer_run_id=layer_run_id,
-                layer=BRONZE_LAYER
-            )
-
-        except Exception as e:
-            log_event(
-                logger_bronze_entity,
-                "WARNING",
-                f"Z-Order failed: {e}",
-                table=entity_table_name,
-                entity_name=entity_name,
-                master_run_id=master_run_id,
-                layer_run_id=layer_run_id,
-                layer=BRONZE_LAYER
-            )
