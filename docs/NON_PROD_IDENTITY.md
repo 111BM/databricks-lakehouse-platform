@@ -58,7 +58,7 @@ Development mode prefixes every job with the deploying identity's name
 (`[dev bireshmoktan] …`) and is meant for one person's copy. Its one useful side
 effect — pausing schedules — is now done **explicitly, in the qa target only**.
 Setting `pause_status` in the shared job YAML instead would apply to every target;
-that mistake once scheduled dev (README → CI/CD, *Schedule*).
+that mistake once scheduled dev ([CI_CD_PIPELINE.md](CI_CD_PIPELINE.md), *Schedule*).
 
 ### 5. dev deployed by the developer under OAuth — not by CI
 
@@ -209,4 +209,4 @@ risk ended when the token stopped working. On 2026-10-02:
 - [CI_SERVICE_PRINCIPAL.md](CI_SERVICE_PRINCIPAL.md) — the same move for prod
 - [CI_CONCURRENCY.md](CI_CONCURRENCY.md) — why qa's deploy and test share a concurrency group
 - [UNITY_CATALOG_GRANTS.md](UNITY_CATALOG_GRANTS.md) — the permission model these grants are a subset of
-- README → *Platform constraints: Databricks Free Edition*
+- [PLATFORM_CONSTRAINTS.md](PLATFORM_CONSTRAINTS.md)

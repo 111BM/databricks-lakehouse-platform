@@ -22,4 +22,4 @@ deleted.
 
 - [docs/UNITY_CATALOG_GRANTS.md](../docs/UNITY_CATALOG_GRANTS.md) — the reasoning behind the permission model
 - [docs/CI_SERVICE_PRINCIPAL.md](../docs/CI_SERVICE_PRINCIPAL.md) — how the prod service principal was set up, and what verified it
-- [README → Platform constraints](../README.md#platform-constraints-databricks-free-edition) — why the model cannot be applied here
+- [Platform constraints](../docs/PLATFORM_CONSTRAINTS.md) — why the model cannot be applied here

@@ -397,7 +397,7 @@ LIMIT 5;
 
 ## 📚 RELATED DOCS
 
-- [Architecture Overview](../README.md) - System architecture
+- [Architecture](ARCHITECTURE.md) - System architecture
 - Backfill implementation lives in `src/superstore_shared_utilities/superstore_backfill_utils.py`
   (`get_backfill_config`, `get_incremental_with_backfill`, `validate_backfill_impact`)
 - Databricks Docs: [Delta Lake Time Travel](https://docs.databricks.com/delta/history.html)

@@ -38,7 +38,7 @@ time spent queued against it**:
 
 Nothing was wrong with the code: a re-run the next morning
 (`939289020577241`) passed. The timeout that tripped had been added the day before
-(see the README's *Timeouts and retries*) — a correct fix with a side effect
+(see *Timeouts and retries* in [CI_CD_PIPELINE.md](CI_CD_PIPELINE.md)) — a correct fix with a side effect
 nobody had tested: overlapping runs.
 
 **2. A test ran against two commits' code.** Test B's run was created at
@@ -175,5 +175,5 @@ green qa integration run, every time, including docs-only commits.
 
 ## See also
 
-- README → *CI/CD* and *Timeouts and retries*
+- [CI_CD_PIPELINE.md](CI_CD_PIPELINE.md) → *Timeouts and retries*
 - [GitHub: control the concurrency of workflows and jobs](https://docs.github.com/en/actions/using-jobs/using-concurrency)
