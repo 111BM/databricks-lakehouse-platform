@@ -1,10 +1,8 @@
-# ⚡ BACKFILL & REPLAY QUICK REFERENCE
-
-## 1-Page Cheat Sheet for Reprocessing Operations
+# Run Modes and Backfill — which mode to use, how to run it, how to check it
 
 ---
 
-## 🧭 WHICH MODE DO I WANT?
+## Which mode do I want?
 
 The four modes answer different questions. Picking the wrong one is the most
 common mistake, so start here.
@@ -22,18 +20,18 @@ If you deployed a code fix and existing tables are now wrong, that is a
 **replay**. Bronze already has the raw data; re-acquiring it from the source is
 wasted work, and once the vendor ages those files out it is not possible at all.
 
-⚠️ **The window filters INGESTION date, not business date.** `start_date=2024-05-01`
+**The window filters INGESTION date, not business date.** `start_date=2024-05-01`
 means "rows that *arrived* on May 1st", not "orders placed on May 1st". There is
 no business-date window.
 
-⚠️ **`full_refresh` is disabled.** Every orchestrator passes
+**`full_refresh` is disabled.** Every orchestrator passes
 `allow_full_refresh=False`, so it raises. Enabling it takes a code change, not a
 parameter — deliberately, because an unbounded reprocess should never be one
 typo away.
 
 ---
 
-## 📋 COMMON COMMANDS
+## Common commands
 
 > **Command shape.** `bundle run` takes the **resource key** (`superstore_data_platform`)
 > plus `--target`, *not* the deployed job name. Job parameters are passed with
@@ -47,12 +45,12 @@ typo away.
 > raises instead of degrading. Always confirm the resolved parameters in the
 > run's task detail before trusting a reprocessing run.
 
-### **Normal Incremental Run** (Default)
+### Normal Incremental Run (Default)
 ```bash
 databricks bundle run superstore_data_platform --target dev
 ```
 
-### **Dry-Run (Preview Impact)** — always do this first
+### Dry-Run (Preview Impact) — always do this first
 ```bash
 databricks bundle run superstore_data_platform --target dev --params run_mode=replay,start_date=2024-05-01,end_date=2024-05-07,dry_run=true
 ```
@@ -60,29 +58,29 @@ databricks bundle run superstore_data_platform --target dev --params run_mode=re
 > four layers, and the 11 serving notebooks. Each reports its impact and exits
 > before writing. Combine it with any mode.
 
-### **Replay a Week** (after a logic fix)
+### Replay a Week (after a logic fix)
 ```bash
 databricks bundle run superstore_data_platform --target dev --params run_mode=replay,start_date=2024-05-01,end_date=2024-05-07
 ```
 
-### **Replay a Single Day**
+### Replay a Single Day
 ```bash
 databricks bundle run superstore_data_platform --target dev --params run_mode=replay,start_date=2024-05-01,end_date=2024-05-01
 ```
 
-### **Backfill a Window the Source Never Delivered**
+### Backfill a Window the Source Never Delivered
 ```bash
 databricks bundle run superstore_data_platform --target dev --params run_mode=backfill,start_date=2024-05-01,end_date=2024-05-07
 ```
 
-### **Backfill Yesterday**
+### Backfill Yesterday
 ```bash
 YESTERDAY=$(python3 -c "import datetime;print(datetime.date.today()-datetime.timedelta(days=1))")
 databricks bundle run superstore_data_platform --target dev --params run_mode=backfill,start_date=$YESTERDAY,end_date=$YESTERDAY
 ```
 > `date -d "yesterday"` is GNU-only and fails on macOS; the Python form above is portable.
 
-### **From the Databricks UI**
+### From the Databricks UI
 Run now → *Run with different parameters* → set `run_mode`, `start_date`,
 `end_date`, `dry_run`. Same four parameters, same semantics.
 
@@ -109,7 +107,7 @@ Run now → *Run with different parameters* → set `run_mode`, `start_date`,
 
 ---
 
-## 🛡️ SAFETY CHECKLIST
+## Safety checklist
 
 Before ANY backfill or replay:
 
@@ -125,9 +123,9 @@ Before ANY backfill or replay:
 
 ---
 
-## 📊 MONITORING QUERIES
+## Monitoring queries
 
-### **Check Last Backfill Status**
+### Check Last Backfill Status
 ```sql
 SELECT 
     layer,
@@ -145,7 +143,7 @@ ORDER BY start_ts DESC
 LIMIT 10;
 ```
 
-### **Verify No Duplicates**
+### Verify No Duplicates
 ```sql
 -- Check Silver layer for duplicates
 SELECT silver_customers_hash_id, COUNT(*) as cnt
@@ -156,7 +154,7 @@ HAVING cnt > 1;
 -- Should return 0 rows
 ```
 
-### **Check Backfill Progress**
+### Check Backfill Progress
 ```sql
 SELECT 
     layer,
@@ -170,21 +168,21 @@ GROUP BY layer;
 
 ---
 
-## 🔧 TROUBLESHOOTING
+## Troubleshooting
 
-### **Problem: "Unknown run_mode"**
+### Problem: "Unknown run_mode"
 **Solution:** The mode is misspelled. Valid values are `incremental`,
 `backfill`, `replay`, `full_refresh`. This raises deliberately — it used to
 fall back to `incremental` and run the wrong operation silently.
 
-### **Problem: "start_date is required"**
+### Problem: "start_date is required"
 **Solution:** `backfill` and `replay` need a window. If you genuinely want
 everything, that is `full_refresh`, which is gated in code.
 
-### **Problem: "Date range too large"**
+### Problem: "Date range too large"
 **Solution:** Break into smaller chunks or increase `max_days` in code.
 
-### **Problem: 0 rows processed**
+### Problem: 0 rows processed
 
 For a **replay**, check that Bronze actually holds rows in the window:
 ```sql
@@ -201,7 +199,7 @@ check the landing volume instead:
 A file re-downloaded today carries today's modification time, so it will not
 match a historical window.
 
-### **Problem: Backfill too slow**
+### Problem: Backfill too slow
 **Solutions:**
 1. Increase `shuffle_partitions` in config
 2. Use larger cluster
@@ -214,7 +212,7 @@ GROUP BY ingestion_date
 ORDER BY row_count DESC;
 ```
 
-### **Problem: Duplicate data**
+### Problem: Duplicate data
 **Solution:** Delete and re-run with fresh checkpoint:
 ```bash
 # Delete checkpoint (in Databricks)
@@ -225,7 +223,7 @@ dbutils.fs.rm("/checkpoint/path/_backfill_20240501_20240507", recurse=True)
 
 ---
 
-## 📝 PARAMETERS REFERENCE
+## Parameters reference
 
 | Parameter | Values | Default | Required? |
 |-----------|--------|---------|----------|
@@ -243,11 +241,11 @@ gated.
 
 ---
 
-## ⚠️ DANGER ZONE
+## Danger zone
 
-### **Full Refresh** (Reprocess ALL data)
+### Full Refresh (Reprocess ALL data)
 
-**❌ DO NOT USE unless absolutely necessary!**
+**Do not use unless absolutely necessary.**
 
 1. First, enable in code:
 ```python
@@ -276,7 +274,7 @@ databricks bundle run superstore_data_platform --target dev --params run_mode=fu
 
 ---
 
-## 📊 METRICS FIELDS
+## Metrics fields
 
 Every layer writes per-entity metrics. The field that records the run mode is
 `load_type`, on the Bronze, Silver and Gold metrics tables:
@@ -305,9 +303,9 @@ was written.
 
 ---
 
-## 📦 EXAMPLE SCENARIOS
+## Example scenarios
 
-### **Scenario 1: Missed Files**
+### Scenario 1: Missed Files
 **Problem:** Ingestion job failed on May 1st, missed files
 
 This is a **backfill** — the data was never loaded, so Bronze must re-acquire it.
@@ -320,7 +318,7 @@ databricks bundle run superstore_data_platform --target dev --params run_mode=ba
 > stable across re-reads. It deliberately does not filter `ingestion_date`,
 > which is re-stamped on every read and so can never match a past window.
 
-### **Scenario 2: Fixed Data Quality Rule**
+### Scenario 2: Fixed Data Quality Rule
 **Problem:** Fixed regex validation, need to re-validate March data
 
 This is a **replay** — Bronze is unchanged and correct; only the derived layers
@@ -334,7 +332,7 @@ databricks bundle run superstore_data_platform --target dev --params run_mode=re
 > Expect quarantine counts to fall and silver counts to rise by the same amount.
 > If they don't, the fix didn't do what you thought.
 
-### **Scenario 3: Business Logic Change**
+### Scenario 3: Business Logic Change
 **Problem:** Changed SCD Type 2 logic, need to recompute dimensions
 
 **Solution:**
@@ -353,7 +351,7 @@ databricks bundle run superstore_data_platform --target dev --params run_mode=re
 > reference cannot resolve, so the task fails. Use `--only` only for task groups that
 > include their own upstream dependencies.
 
-### **Scenario 4: Monthly Historical Load**
+### Scenario 4: Monthly Historical Load
 **Problem:** Need to load historical data, one month at a time
 
 **Solution:**
@@ -378,7 +376,7 @@ done
 
 ---
 
-## 📞 SUPPORT
+## If a backfill fails
 
 **If backfill fails:**
 
@@ -390,20 +388,14 @@ WHERE run_status = 'FAILED'
 ORDER BY start_ts DESC
 LIMIT 5;
 ```
-3. Review the TROUBLESHOOTING section above
+3. Review [Troubleshooting](#troubleshooting) above
 4. Check `notes` field in metrics for specific errors
 
 ---
 
-## 📚 RELATED DOCS
+## Related docs
 
 - [Architecture](ARCHITECTURE.md) - System architecture
 - Backfill implementation lives in `src/superstore_shared_utilities/superstore_backfill_utils.py`
   (`get_backfill_config`, `get_incremental_with_backfill`, `validate_backfill_impact`)
 - Databricks Docs: [Delta Lake Time Travel](https://docs.databricks.com/delta/history.html)
-
----
-
-**Last Updated:** May 2026
-
-**Maintained By:** Data Engineering Team
