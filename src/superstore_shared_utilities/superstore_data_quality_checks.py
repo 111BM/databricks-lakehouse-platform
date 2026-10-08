@@ -175,13 +175,17 @@ def run_reconciliation_checks(
         ).first().asDict()
         row = reconciliation_check_row(env, master_run_id, entity, result, checked_at)
         rows.append(row)
+        # The row counts go in as their own fields, not pasted into the
+        # message: `details` is already a JSON string, so embedding it made the
+        # formatter escape every quote and left the counts unqueryable.
         log_event(
             logger,
             "INFO" if row["passed"] else "ERROR",
             f"reconciliation for {entity}: bronze={int(row['expected_value'])}, "
-            f"accounted={int(row['observed_value'])} ({row['details']})",
+            f"accounted={int(row['observed_value'])}",
             entity=entity,
             reconciliation_balanced=row["passed"],
+            **json.loads(row["details"]),
             master_run_id=master_run_id,
             layer_run_id=layer_run_id,
             layer="Silver",
