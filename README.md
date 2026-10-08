@@ -9,15 +9,33 @@ The dataset is small on purpose. The point is the platform engineering around it
 
 ---
 
-## The five-minute tour
+## Highlights
 
-| # | Look at | What it shows |
-|---|---|---|
-| 1 | [Architecture](#architecture) and the [18-task job](resources/superstore_lakehouse_job.job.yml) | Medallion layers, one job definition for every environment, per-task timeouts and retries set from measured runtimes |
-| 2 | [Silver module](src/superstore_silver/) + [severity tiers](docs/SEVERITY_TIERS.md) | Data quality as **routing, not filtering**: invalid keys quarantined with named violations, descriptive errors repaired and flagged, duplicates audited |
-| 3 | [Reconciliation invariant](docs/RECONCILIATION_INVARIANT.md) + [alerts](docs/DATA_QUALITY_ALERTS.md) | `bronze == silver + quarantine + audit + superseded`, checked on every run (balanced on 1,010,534 rows in prod), with SQL Alerts to email and Slack |
-| 4 | [Integration test](docs/TESTING_STRATEGY.md) + [CI/CD](docs/CI_CD_PIPELINE.md) | 288 unit tests, and a suite that seeds dirty data, runs the **real** pipeline twice, replays it, and asserts every layer before anything reaches prod |
-| 5 | [Defects found by measurement](docs/DEFECTS_FOUND_BY_MEASUREMENT.md) | A pipeline that reported SUCCESS for three weeks while processing nothing — and the dozen quieter failures found the same way |
+- **Data quality as routing, not filtering.** Invalid keys are quarantined with named
+  violations, descriptive errors repaired and flagged, duplicates audited.
+  → [Silver module](src/superstore_silver/) · [Severity tiers](docs/SEVERITY_TIERS.md)
+
+- **Every row accounted for.** `bronze == silver + quarantine + audit + superseded`,
+  checked on every run (balanced on 1,010,534 rows in prod), with SQL Alerts to email
+  and Slack.
+  → [Reconciliation invariant](docs/RECONCILIATION_INVARIANT.md) · [Alerts](docs/DATA_QUALITY_ALERTS.md)
+
+- **Tested against the real pipeline.** 288 unit tests, and a suite that seeds dirty
+  data, runs the real pipeline twice, replays it, and asserts every layer before
+  anything reaches prod.
+  → [Testing strategy](docs/TESTING_STRATEGY.md) · [CI/CD](docs/CI_CD_PIPELINE.md)
+
+- **Defects found by measurement.** A pipeline that reported SUCCESS for three weeks
+  while processing nothing, and the dozen quieter failures found the same way.
+  → [Defects found by measurement](docs/DEFECTS_FOUND_BY_MEASUREMENT.md)
+
+- **Runtime halved by profiling.** End-to-end at 3M source rows went from 23 min 53 s
+  to 11 min 38 s, after profiling showed Silver taking 91% of processing time.
+  → [Performance investigation](docs/PERFORMANCE_INVESTIGATION.md)
+
+- **One job definition for every environment.** Medallion layers in an 18-task job,
+  with per-task timeouts and retries set from measured runtimes.
+  → [Architecture](#architecture) · [18-task job](resources/superstore_lakehouse_job.job.yml)
 
 ---
 
