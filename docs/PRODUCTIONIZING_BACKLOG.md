@@ -22,7 +22,7 @@ Gaps I'm aware of and would close before running this at real scale — kept her
 
 5. **Long-lived service principal secrets** — both OAuth secrets last 365 days with "all APIs" scope and are rotated by hand. Narrow the scope to the APIs a deploy actually uses, and rotate before ~2027-10. OIDC federation would remove the secrets entirely, but needs account-level APIs Free Edition lacks.
 
-6. **Serverless startup dominates runtime** — ~60% at 3M rows, close to 100% for the 40-minute integration suite on a 9-row seed. Consolidating tasks is the cost and speed lever; not yet done.
+6. **Serverless startup dominates runtime at small volumes** — ~60% at 3M rows, close to 100% for the 40-minute integration suite on a 9-row seed, but under a fifth of the 41-minute prod run on ~100M rows (2026-10-09), where Silver becomes the bottleneck instead. Consolidating tasks is the cost and speed lever for small batches; not yet done.
 
 7. **No remote Terraform state** — required before the governance model, or bundle-managed schemas (item 4), can be trusted; it needs a bucket outside Databricks.
 

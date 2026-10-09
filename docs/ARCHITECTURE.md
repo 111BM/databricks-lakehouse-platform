@@ -25,7 +25,8 @@ The diagram is in the [README](../README.md#architecture). This document is the 
 
 ## Performance
 
-Validated end-to-end at **3M source rows**. The per-entity metrics tables make the pipeline
+Validated end-to-end at **~100M source rows** in prod (2026-10-09, 41 min, details below).
+The per-entity metrics tables make the pipeline
 self-profiling — they were used to find and fix a Silver bottleneck that **halved total runtime**:
 
 | Source rows | Before | After |
@@ -45,8 +46,14 @@ two fused aggregations removed eight full-lineage scans per entity with no metri
 verified numerically equivalent, runtime impact not yet measured:
 **[docs/SILVER_ACTION_COLLAPSE.md](SILVER_ACTION_COLLAPSE.md)**.
 
-Runtime is now ~60% serverless task startup and ~40% data processing at 3M rows, scaling
-linearly — so task consolidation, not Spark tuning, is the next meaningful lever.
+At 3M rows runtime was ~60% serverless task startup and ~40% data processing, which made
+task consolidation look like the next lever. **At ~100M rows that flips.** Prod run
+`797774097708535` (2026-10-09, as `superstore-ci-prod`) took **41 min** for 100,200,981 new
+rows, all 18 tasks green on the first attempt: Bronze 7 min 52 s, Silver 23 min 13 s, Gold
+1–3 min, features and marts 2–6 min each. Startup is now under a fifth of the run, and Silver is the layer to watch
+(23 of its 60 minutes). Runtime grew far less than linearly: the per-million-row rate measured
+at 1M–3M predicted about 2 h 40 min, most likely because Serverless scaled out for a batch
+big enough to need it (not verified from cluster metrics). Per-entity numbers: **[docs/PERFORMANCE_INVESTIGATION.md](PERFORMANCE_INVESTIGATION.md#at-100m-rows)**.
 
 ## Repository structure
 

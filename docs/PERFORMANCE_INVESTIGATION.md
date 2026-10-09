@@ -174,6 +174,54 @@ than a further 3% on the data half.
 
 ---
 
+## At 100M rows
+
+On 2026-10-09, 100 synthetic source files (~7.3 GB gzip CSV, **100,200,981 rows**, order
+dates 2025-01-01 to 2026-09-30) landed in the prod volume at once, on top of the 1,010,534
+rows prod already held. One incremental run, `797774097708535`, as `superstore-ci-prod`,
+processed them with no code or configuration change.
+
+| Task | ~100M rows |
+|---|---|
+| **Whole pipeline** | **41 min 02 s** (8 min 32 s at 1M, 11 min 38 s at 3M) |
+| Bronze | 7 min 52 s |
+| Silver | **23 min 13 s** (timeout 60 min) |
+| Gold dimensions / facts | 1.4 / 2.5 min |
+| Features and marts | 2–6 min each |
+
+Every task succeeded on attempt 0. Silver per entity, from `prod_metrics.silver_layer_metrics`:
+
+| Entity | Duration | Read rows | Read rows/s | Dirty (quarantined) |
+|---|---|---|---|---|
+| **orders** | **569 s** | 100,200,981 | 176,100 | 15,460,659 |
+| sales | 360 s | 100,200,981 | 278,300 | 57,252 |
+| customers | 241 s | 100,200,981 | 415,800 | 9,527 |
+| products | 139 s | 100,200,981 | 720,900 | 9,635 |
+
+**Reconciliation balanced on all four entities at 101,211,515 Bronze rows**, with zero
+orphaned facts and product placeholder exposure at 0.07%. Silver and Gold agree exactly:
+100,935,675 sales and 82,430,886 orders.
+
+**The linear model was wrong in the right direction.** "~93 s per million rows plus ~7 min"
+predicted about 2 h 40 min; the run took 41 min, about 20 s per million rows once startup is
+taken out. The likely reason is that Serverless adds compute for a batch this size and did not
+need to at 1M–3M; that is an inference, not read from cluster metrics. Either way, the
+per-million figure above describes small batches, not a ceiling.
+
+**`orders` is still the slowest entity, and it quarantined 15.4% of rows.** That is the
+generator, not the pipeline: it sets `ship_date` to `order_date` plus −2 to +10 days, so
+2 days in 13 (15.4%) ship before they were ordered and fail the cross-column date rule. The
+quarantine path handled 15.5M rows in one run without falling over, which is itself a useful
+result.
+
+**What it changes.** Startup is now under a fifth of runtime rather than ~60%, so at this
+volume task consolidation matters less and Silver, `orders` in particular, matters more.
+Silver used 23 of its 60 minutes; a batch roughly 2.5× larger would need a longer timeout or
+to be split across runs (for example `cloudFiles.maxFilesPerTrigger`). The deferred date-parse
+change above is worth revisiting at this size: ~20 s at 3M rows scales with data, not startup.
+
+---
+
 ## Reproducing the measurement
 
 ```sql

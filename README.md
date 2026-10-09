@@ -5,7 +5,7 @@
 
 An end-to-end **lakehouse on Databricks Serverless**: a medallion pipeline (Auto Loader → Bronze → Silver → Gold → marts, features and KPI views) built on the Superstore retail dataset, with SCD2 dimensions, data-quality quarantine, row-level reconciliation, alerting to Slack, and CI/CD that promotes the same code through **dev → qa → prod** under service-principal identities.
 
-The dataset is small on purpose. The point is the platform engineering around it — and the [defects found by measuring what it produced](docs/DEFECTS_FOUND_BY_MEASUREMENT.md), most of which ran green.
+The data is the Superstore schema, synthetically generated with deliberate dirt; prod has run it at about 101M rows. The point is the platform engineering around it — and the [defects found by measuring what it produced](docs/DEFECTS_FOUND_BY_MEASUREMENT.md), most of which ran green.
 
 ---
 
@@ -16,7 +16,7 @@ The dataset is small on purpose. The point is the platform engineering around it
   → [Silver module](src/superstore_silver/) · [Severity tiers](docs/SEVERITY_TIERS.md)
 
 - **Every row accounted for.** `bronze == silver + quarantine + audit + superseded`,
-  checked on every run (balanced on 1,010,534 rows in prod), with SQL Alerts to email
+  checked on every run (balanced on 101,211,515 rows in prod), with SQL Alerts to email
   and Slack.
   → [Reconciliation invariant](docs/RECONCILIATION_INVARIANT.md) · [Alerts](docs/DATA_QUALITY_ALERTS.md)
 
@@ -32,6 +32,10 @@ The dataset is small on purpose. The point is the platform engineering around it
 - **Runtime halved by profiling.** End-to-end at 3M source rows went from 23 min 53 s
   to 11 min 38 s, after profiling showed Silver taking 91% of processing time.
   → [Performance investigation](docs/PERFORMANCE_INVESTIGATION.md)
+
+- **100M rows in 41 minutes.** About 100M new rows ran through prod end to end with
+  no code change; Silver, the slowest layer, took 23 min of its 60 min timeout.
+  → [At 100M rows](docs/PERFORMANCE_INVESTIGATION.md#at-100m-rows)
 
 - **One job definition for every environment.** Medallion layers in an 18-task job,
   with per-task timeouts and retries set from measured runtimes.
@@ -112,8 +116,9 @@ Layer by layer, the cross-cutting design (config-driven contracts, environment i
 | Measure | Value |
 |---|---|
 | End-to-end runtime at 3M source rows | **11 min 38 s**, down from 23 min 53 s ([how](docs/PERFORMANCE_INVESTIGATION.md)) |
+| End-to-end runtime at ~100M source rows (prod) | **41 min**: Bronze 8 min, Silver 23 min, all 18 tasks first attempt ([details](docs/PERFORMANCE_INVESTIGATION.md#at-100m-rows)) |
 | Slowest Silver entity after the date-parsing fix | 803 s → **158 s** |
-| Prod reconciliation | balanced on **1,010,534** rows across four entities, checked every run |
+| Prod reconciliation | balanced on **101,211,515** rows across four entities, checked every run |
 | Unit tests / integration suite | **288** / about **40 min**, blocking every qa promotion |
 | Personal access tokens in use | **0** — CI deploys as service principals, people sign in with OAuth |
 
