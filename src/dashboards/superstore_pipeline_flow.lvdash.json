@@ -79,10 +79,12 @@
         "SELECT CONCAT('Bronze: ', entity) AS source, outcome, row_count\n",
         "FROM rec\n",
         "LATERAL VIEW stack(4,\n",
-        "  'Silver (current)',              d.silver_rows,\n",
-        "  'Silver (superseded version)',   d.superseded_rows,\n",
-        "  'Audit (duplicate)',             d.audit_rows,\n",
-        "  'Quarantine (failed a rule)',    d.quarantine_rows\n",
+        "  -- Numbered so the chart keeps this order: the two thin flows (superseded,\n",
+        "  -- quarantine) are separated by a thick one, and their labels do not collide.\n",
+        "  '1 Silver (current)',  d.silver_rows,\n",
+        "  '2 Superseded',        d.superseded_rows,\n",
+        "  '3 Audit (duplicate)', d.audit_rows,\n",
+        "  '4 Quarantine',        d.quarantine_rows\n",
         ") AS outcome, row_count\n",
         "WHERE row_count > 0\n"
       ]
@@ -671,7 +673,7 @@
             "x": 0,
             "y": 5,
             "width": 8,
-            "height": 9
+            "height": 10
           }
         },
         {
@@ -693,7 +695,7 @@
             "x": 8,
             "y": 5,
             "width": 4,
-            "height": 9
+            "height": 10
           }
         },
         {
@@ -707,7 +709,7 @@
           },
           "position": {
             "x": 0,
-            "y": 14,
+            "y": 15,
             "width": 12,
             "height": 1
           }
@@ -1001,7 +1003,7 @@
           },
           "position": {
             "x": 0,
-            "y": 15,
+            "y": 16,
             "width": 8,
             "height": 8
           }
@@ -1072,7 +1074,7 @@
           },
           "position": {
             "x": 8,
-            "y": 15,
+            "y": 16,
             "width": 4,
             "height": 8
           }
@@ -1088,7 +1090,7 @@
           },
           "position": {
             "x": 0,
-            "y": 23,
+            "y": 24,
             "width": 12,
             "height": 1
           }
@@ -1175,7 +1177,7 @@
           },
           "position": {
             "x": 0,
-            "y": 24,
+            "y": 25,
             "width": 6,
             "height": 7
           }
@@ -1267,7 +1269,7 @@
           },
           "position": {
             "x": 6,
-            "y": 24,
+            "y": 25,
             "width": 6,
             "height": 7
           }
@@ -1283,7 +1285,7 @@
           },
           "position": {
             "x": 0,
-            "y": 31,
+            "y": 32,
             "width": 12,
             "height": 1
           }
@@ -1370,7 +1372,7 @@
           },
           "position": {
             "x": 0,
-            "y": 32,
+            "y": 33,
             "width": 6,
             "height": 7
           }
@@ -1453,7 +1455,7 @@
           },
           "position": {
             "x": 6,
-            "y": 32,
+            "y": 33,
             "width": 6,
             "height": 7
           }
@@ -1469,7 +1471,7 @@
           },
           "position": {
             "x": 0,
-            "y": 39,
+            "y": 40,
             "width": 12,
             "height": 1
           }
@@ -1666,7 +1668,7 @@
           },
           "position": {
             "x": 0,
-            "y": 40,
+            "y": 41,
             "width": 7,
             "height": 8
           }
@@ -1831,7 +1833,7 @@
           },
           "position": {
             "x": 7,
-            "y": 40,
+            "y": 41,
             "width": 5,
             "height": 8
           }
