@@ -41,7 +41,7 @@ resources:
       # legs exist to exercise the production path, and a test that runs it
       # under different rules is testing something else.
       #
-      # run_job_task: max_retries 0. A retry would re-run the whole 18-task
+      # run_job_task: max_retries 0. A retry would re-run the whole 19-task
       # pipeline; that job already retries its own tasks and carries its own
       # timeouts, so the policy lives there, once.
       #

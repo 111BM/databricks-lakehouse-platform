@@ -382,6 +382,28 @@ resources:
           max_retries: 1
           min_retry_interval_millis: 60000
           retry_on_timeout: false
+        # Last task: records this run's headline numbers so the dashboards can
+        # show them next to the previous run's (docs/DASHBOARDS.md). It depends
+        # on every KPI view because the snapshot must describe what the
+        # dashboards are about to show.
+        - task_key: kpi_run_snapshot
+          depends_on:
+            - task_key: customer_kpi_view
+            - task_key: metrics_daily_kpi_view
+            - task_key: metrics_business_kpi_view
+            - task_key: product_insights_kpi_view
+          notebook_task:
+            notebook_path: ${workspace.file_path}/src/metrics/kpi_run_snapshot
+            source: WORKSPACE
+            base_parameters:
+              # The widget key matches the reference name on purpose: see the
+              # hyphen gotcha noted at the top of this job's parameters.
+              trigger_type: "{{job.trigger.type}}"
+          environment_key: superstore_serverless_environment
+          timeout_seconds: 900
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
       # Whole-run ceiling. The worst task on each step of the critical path
       # (init -> schemas -> bronze -> silver -> gold -> mart -> view) sums to
       # ~75 min if every stall landed on one run; typical prod is under 6 min.

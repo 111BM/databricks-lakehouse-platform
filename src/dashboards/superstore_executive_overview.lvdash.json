@@ -61,20 +61,6 @@
       ]
     },
     {
-      "name": "refreshed",
-      "displayName": "When the tables behind this dashboard were last written",
-      "queryLines": [
-        "-- last_altered moves on every write, so this is when the pipeline last refreshed\n",
-        "-- these tables. current_schema() is the dataset schema the bundle sets per\n",
-        "-- environment, so dev, qa and prod each report their own tables.\n",
-        "SELECT\n",
-        "  CONCAT(FORMAT_NUMBER((unix_timestamp(current_timestamp()) - unix_timestamp(MAX(last_altered))) / 3600.0, 1), ' h ago') AS refreshed\n",
-        "FROM information_schema.tables\n",
-        "WHERE table_schema = current_schema()\n",
-        "  AND table_name IN ('metrics_daily_kpi', 'product_insights_kpi')\n"
-      ]
-    },
-    {
       "name": "category_mix",
       "displayName": "Sales by category",
       "queryLines": [
@@ -96,6 +82,92 @@
         "GROUP BY category, sub_category\n",
         "ORDER BY sales DESC\n",
         "LIMIT 15\n"
+      ]
+    },
+    {
+      "name": "run_comparison",
+      "displayName": "This run vs last run",
+      "queryLines": [
+        "-- One row per pipeline run is recorded in kpi_run_snapshot (superstore_kpi_snapshot.py).\n",
+        "-- This shows the latest two side by side, so a jump can be read as new data\n",
+        "-- (data covers more days) or restated history (same days, different totals).\n",
+        "WITH ranked AS (\n",
+        "  SELECT *, ROW_NUMBER() OVER (ORDER BY snapshot_at DESC) AS rn FROM kpi_run_snapshot\n",
+        "),\n",
+        "c AS (SELECT * FROM ranked WHERE rn = 1),\n",
+        "p AS (SELECT * FROM ranked WHERE rn = 2),\n",
+        "j AS (\n",
+        "  SELECT\n",
+        "    c.data_from AS c_data_from,\n",
+        "    c.data_through AS c_data_through,\n",
+        "    c.snapshot_at AS c_snapshot_at,\n",
+        "    c.run_started_at AS c_run_started_at,\n",
+        "    c.trigger_type AS c_trigger_type,\n",
+        "    c.raw_rows_ingested AS c_raw_rows_ingested,\n",
+        "    c.revenue_30d AS c_revenue_30d,\n",
+        "    c.profit_30d AS c_profit_30d,\n",
+        "    c.revenue_total AS c_revenue_total,\n",
+        "    c.profit_total AS c_profit_total,\n",
+        "    c.orders_total AS c_orders_total,\n",
+        "    c.customers_total AS c_customers_total,\n",
+        "    p.data_from AS p_data_from,\n",
+        "    p.data_through AS p_data_through,\n",
+        "    p.snapshot_at AS p_snapshot_at,\n",
+        "    p.run_started_at AS p_run_started_at,\n",
+        "    p.trigger_type AS p_trigger_type,\n",
+        "    p.raw_rows_ingested AS p_raw_rows_ingested,\n",
+        "    p.revenue_30d AS p_revenue_30d,\n",
+        "    p.profit_30d AS p_profit_30d,\n",
+        "    p.revenue_total AS p_revenue_total,\n",
+        "    p.profit_total AS p_profit_total,\n",
+        "    p.orders_total AS p_orders_total,\n",
+        "    p.customers_total AS p_customers_total\n",
+        "  FROM c LEFT JOIN p ON TRUE\n",
+        ")\n",
+        "SELECT 1 AS ord, 'This run' AS run,\n",
+        "  IF(c_data_from IS NULL, '—', CONCAT(DATE_FORMAT(c_data_from, 'd MMM yyyy'), ' – ', DATE_FORMAT(c_data_through, 'd MMM yyyy'))) AS data_covers,\n",
+        "  IF(c_snapshot_at IS NULL, '—', CONCAT(DATE_FORMAT(from_utc_timestamp(c_snapshot_at, 'Australia/Sydney'), 'EEE d MMM, HH:mm'), ' ', IF(unix_timestamp(from_utc_timestamp(c_snapshot_at, 'Australia/Sydney')) - unix_timestamp(c_snapshot_at) = 39600, 'AEDT', 'AEST'))) AS refreshed,\n",
+        "  CASE c_trigger_type WHEN 'periodic' THEN 'scheduled' WHEN 'one_time' THEN 'manual' WHEN 'run_job_task' THEN 'integration test' WHEN NULL THEN '—' ELSE c_trigger_type END AS trigger,\n",
+        "  CASE WHEN (c_revenue_30d) IS NULL THEN '—' WHEN ABS((c_revenue_30d)) >= 1e9 THEN CONCAT(IF((c_revenue_30d) < 0, '−$', '$'), FORMAT_NUMBER(ABS((c_revenue_30d)) / 1e9, 2), 'bn') WHEN ABS((c_revenue_30d)) >= 1e6 THEN CONCAT(IF((c_revenue_30d) < 0, '−$', '$'), FORMAT_NUMBER(ABS((c_revenue_30d)) / 1e6, 2), 'm') WHEN ABS((c_revenue_30d)) >= 1e3 THEN CONCAT(IF((c_revenue_30d) < 0, '−$', '$'), FORMAT_NUMBER(ABS((c_revenue_30d)) / 1e3, 1), 'k') ELSE CONCAT(IF((c_revenue_30d) < 0, '−$', '$'), FORMAT_NUMBER(ABS((c_revenue_30d)), 0)) END AS revenue,\n",
+        "  CASE WHEN (c_profit_30d) IS NULL THEN '—' WHEN ABS((c_profit_30d)) >= 1e9 THEN CONCAT(IF((c_profit_30d) < 0, '−$', '$'), FORMAT_NUMBER(ABS((c_profit_30d)) / 1e9, 2), 'bn') WHEN ABS((c_profit_30d)) >= 1e6 THEN CONCAT(IF((c_profit_30d) < 0, '−$', '$'), FORMAT_NUMBER(ABS((c_profit_30d)) / 1e6, 2), 'm') WHEN ABS((c_profit_30d)) >= 1e3 THEN CONCAT(IF((c_profit_30d) < 0, '−$', '$'), FORMAT_NUMBER(ABS((c_profit_30d)) / 1e3, 1), 'k') ELSE CONCAT(IF((c_profit_30d) < 0, '−$', '$'), FORMAT_NUMBER(ABS((c_profit_30d)), 0)) END AS profit,\n",
+        "  IF((c_profit_30d / NULLIF(c_revenue_30d, 0)) IS NULL, '—', CONCAT(REPLACE(FORMAT_NUMBER((c_profit_30d / NULLIF(c_revenue_30d, 0)) * 100, 1), '-', '−'), '%')) AS margin\n",
+        "FROM j\n",
+        "UNION ALL\n",
+        "SELECT 2 AS ord, 'Last run' AS run,\n",
+        "  IF(p_data_from IS NULL, '—', CONCAT(DATE_FORMAT(p_data_from, 'd MMM yyyy'), ' – ', DATE_FORMAT(p_data_through, 'd MMM yyyy'))) AS data_covers,\n",
+        "  IF(p_snapshot_at IS NULL, '—', CONCAT(DATE_FORMAT(from_utc_timestamp(p_snapshot_at, 'Australia/Sydney'), 'EEE d MMM, HH:mm'), ' ', IF(unix_timestamp(from_utc_timestamp(p_snapshot_at, 'Australia/Sydney')) - unix_timestamp(p_snapshot_at) = 39600, 'AEDT', 'AEST'))) AS refreshed,\n",
+        "  CASE p_trigger_type WHEN 'periodic' THEN 'scheduled' WHEN 'one_time' THEN 'manual' WHEN 'run_job_task' THEN 'integration test' WHEN NULL THEN '—' ELSE p_trigger_type END AS trigger,\n",
+        "  CASE WHEN (p_revenue_30d) IS NULL THEN '—' WHEN ABS((p_revenue_30d)) >= 1e9 THEN CONCAT(IF((p_revenue_30d) < 0, '−$', '$'), FORMAT_NUMBER(ABS((p_revenue_30d)) / 1e9, 2), 'bn') WHEN ABS((p_revenue_30d)) >= 1e6 THEN CONCAT(IF((p_revenue_30d) < 0, '−$', '$'), FORMAT_NUMBER(ABS((p_revenue_30d)) / 1e6, 2), 'm') WHEN ABS((p_revenue_30d)) >= 1e3 THEN CONCAT(IF((p_revenue_30d) < 0, '−$', '$'), FORMAT_NUMBER(ABS((p_revenue_30d)) / 1e3, 1), 'k') ELSE CONCAT(IF((p_revenue_30d) < 0, '−$', '$'), FORMAT_NUMBER(ABS((p_revenue_30d)), 0)) END AS revenue,\n",
+        "  CASE WHEN (p_profit_30d) IS NULL THEN '—' WHEN ABS((p_profit_30d)) >= 1e9 THEN CONCAT(IF((p_profit_30d) < 0, '−$', '$'), FORMAT_NUMBER(ABS((p_profit_30d)) / 1e9, 2), 'bn') WHEN ABS((p_profit_30d)) >= 1e6 THEN CONCAT(IF((p_profit_30d) < 0, '−$', '$'), FORMAT_NUMBER(ABS((p_profit_30d)) / 1e6, 2), 'm') WHEN ABS((p_profit_30d)) >= 1e3 THEN CONCAT(IF((p_profit_30d) < 0, '−$', '$'), FORMAT_NUMBER(ABS((p_profit_30d)) / 1e3, 1), 'k') ELSE CONCAT(IF((p_profit_30d) < 0, '−$', '$'), FORMAT_NUMBER(ABS((p_profit_30d)), 0)) END AS profit,\n",
+        "  IF((p_profit_30d / NULLIF(p_revenue_30d, 0)) IS NULL, '—', CONCAT(REPLACE(FORMAT_NUMBER((p_profit_30d / NULLIF(p_revenue_30d, 0)) * 100, 1), '-', '−'), '%')) AS margin\n",
+        "FROM j\n",
+        "UNION ALL\n",
+        "SELECT 3 AS ord, 'Change' AS run,\n",
+        "  CASE WHEN p_data_through IS NULL THEN '—' WHEN c_data_through = p_data_through AND c_data_from = p_data_from THEN 'same period' ELSE CONCAT(IF(datediff(c_data_through, p_data_through) >= 0, '+', ''), datediff(c_data_through, p_data_through), ' days of data') END AS data_covers,\n",
+        "  IF(p_snapshot_at IS NULL, '—', CONCAT(FORMAT_NUMBER((unix_timestamp(c_snapshot_at) - unix_timestamp(p_snapshot_at)) / 3600, 1), ' h later')) AS refreshed,\n",
+        "  '' AS trigger,\n",
+        "  CASE WHEN (c_revenue_30d - p_revenue_30d) IS NULL THEN '—' WHEN (c_revenue_30d - p_revenue_30d) = 0 THEN 'no change' WHEN ABS((c_revenue_30d - p_revenue_30d)) >= 1e9 THEN CONCAT(IF((c_revenue_30d - p_revenue_30d) < 0, '▼ −$', '▲ +$'), FORMAT_NUMBER(ABS((c_revenue_30d - p_revenue_30d)) / 1e9, 2), 'bn') WHEN ABS((c_revenue_30d - p_revenue_30d)) >= 1e6 THEN CONCAT(IF((c_revenue_30d - p_revenue_30d) < 0, '▼ −$', '▲ +$'), FORMAT_NUMBER(ABS((c_revenue_30d - p_revenue_30d)) / 1e6, 2), 'm') WHEN ABS((c_revenue_30d - p_revenue_30d)) >= 1e3 THEN CONCAT(IF((c_revenue_30d - p_revenue_30d) < 0, '▼ −$', '▲ +$'), FORMAT_NUMBER(ABS((c_revenue_30d - p_revenue_30d)) / 1e3, 1), 'k') ELSE CONCAT(IF((c_revenue_30d - p_revenue_30d) < 0, '▼ −$', '▲ +$'), FORMAT_NUMBER(ABS((c_revenue_30d - p_revenue_30d)), 0)) END AS revenue,\n",
+        "  CASE WHEN (c_profit_30d - p_profit_30d) IS NULL THEN '—' WHEN (c_profit_30d - p_profit_30d) = 0 THEN 'no change' WHEN ABS((c_profit_30d - p_profit_30d)) >= 1e9 THEN CONCAT(IF((c_profit_30d - p_profit_30d) < 0, '▼ −$', '▲ +$'), FORMAT_NUMBER(ABS((c_profit_30d - p_profit_30d)) / 1e9, 2), 'bn') WHEN ABS((c_profit_30d - p_profit_30d)) >= 1e6 THEN CONCAT(IF((c_profit_30d - p_profit_30d) < 0, '▼ −$', '▲ +$'), FORMAT_NUMBER(ABS((c_profit_30d - p_profit_30d)) / 1e6, 2), 'm') WHEN ABS((c_profit_30d - p_profit_30d)) >= 1e3 THEN CONCAT(IF((c_profit_30d - p_profit_30d) < 0, '▼ −$', '▲ +$'), FORMAT_NUMBER(ABS((c_profit_30d - p_profit_30d)) / 1e3, 1), 'k') ELSE CONCAT(IF((c_profit_30d - p_profit_30d) < 0, '▼ −$', '▲ +$'), FORMAT_NUMBER(ABS((c_profit_30d - p_profit_30d)), 0)) END AS profit,\n",
+        "  CASE WHEN (c_profit_30d / NULLIF(c_revenue_30d, 0) - p_profit_30d / NULLIF(p_revenue_30d, 0)) IS NULL THEN '—' WHEN ROUND((c_profit_30d / NULLIF(c_revenue_30d, 0) - p_profit_30d / NULLIF(p_revenue_30d, 0)) * 100, 2) = 0 THEN 'no change' ELSE CONCAT(IF((c_profit_30d / NULLIF(c_revenue_30d, 0) - p_profit_30d / NULLIF(p_revenue_30d, 0)) < 0, '▼ −', '▲ +'), FORMAT_NUMBER(ABS((c_profit_30d / NULLIF(c_revenue_30d, 0) - p_profit_30d / NULLIF(p_revenue_30d, 0))) * 100, 2), ' pp') END AS margin\n",
+        "FROM j\n",
+        "ORDER BY ord\n"
+      ]
+    },
+    {
+      "name": "page_status",
+      "displayName": "Page query time and freshness",
+      "queryLines": [
+        "-- Query time is when this page ran its queries: it changes on every refresh of\n",
+        "-- the page, unlike the data refresh time. Freshness uses the same 9-day (216 h)\n",
+        "-- threshold as the freshness alert; prod refreshes weekly, Sundays 06:00.\n",
+        "SELECT\n",
+        "  IF(current_timestamp() IS NULL, '—', CONCAT(DATE_FORMAT(from_utc_timestamp(current_timestamp(), 'Australia/Sydney'), 'EEE d MMM, HH:mm'), ' ', IF(unix_timestamp(from_utc_timestamp(current_timestamp(), 'Australia/Sydney')) - unix_timestamp(current_timestamp()) = 39600, 'AEDT', 'AEST'))) AS queried,\n",
+        "  CASE\n",
+        "    WHEN MAX(snapshot_at) IS NULL THEN 'No run recorded'\n",
+        "    WHEN (unix_timestamp(current_timestamp()) - unix_timestamp(MAX(snapshot_at))) / 3600 <= 216 THEN 'Fresh'\n",
+        "    ELSE 'Stale (9+ days)'\n",
+        "  END AS status\n",
+        "FROM kpi_run_snapshot\n"
       ]
     }
   ],
@@ -119,85 +191,7 @@
           "position": {
             "x": 0,
             "y": 0,
-            "width": 6,
-            "height": 2
-          }
-        },
-        {
-          "widget": {
-            "name": "c_through",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "datasetName": "kpi_30d",
-                  "fields": [
-                    {
-                      "name": "data_through",
-                      "expression": "`data_through`"
-                    }
-                  ],
-                  "disaggregated": true
-                }
-              }
-            ],
-            "spec": {
-              "version": 2,
-              "widgetType": "counter",
-              "frame": {
-                "showTitle": true,
-                "title": "Data through"
-              },
-              "encodings": {
-                "value": {
-                  "fieldName": "data_through"
-                }
-              }
-            }
-          },
-          "position": {
-            "x": 6,
-            "y": 0,
-            "width": 3,
-            "height": 2
-          }
-        },
-        {
-          "widget": {
-            "name": "c_refreshed",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "datasetName": "refreshed",
-                  "fields": [
-                    {
-                      "name": "refreshed",
-                      "expression": "`refreshed`"
-                    }
-                  ],
-                  "disaggregated": true
-                }
-              }
-            ],
-            "spec": {
-              "version": 2,
-              "widgetType": "counter",
-              "frame": {
-                "showTitle": true,
-                "title": "Last refreshed"
-              },
-              "encodings": {
-                "value": {
-                  "fieldName": "refreshed"
-                }
-              }
-            }
-          },
-          "position": {
-            "x": 9,
-            "y": 0,
-            "width": 3,
+            "width": 9,
             "height": 2
           }
         },
@@ -244,7 +238,7 @@
           },
           "position": {
             "x": 0,
-            "y": 2,
+            "y": 5,
             "width": 2,
             "height": 2
           }
@@ -307,7 +301,7 @@
           },
           "position": {
             "x": 2,
-            "y": 2,
+            "y": 5,
             "width": 2,
             "height": 2
           }
@@ -355,7 +349,7 @@
           },
           "position": {
             "x": 4,
-            "y": 2,
+            "y": 5,
             "width": 2,
             "height": 2
           }
@@ -418,7 +412,7 @@
           },
           "position": {
             "x": 6,
-            "y": 2,
+            "y": 5,
             "width": 2,
             "height": 2
           }
@@ -464,7 +458,7 @@
           },
           "position": {
             "x": 8,
-            "y": 2,
+            "y": 5,
             "width": 2,
             "height": 2
           }
@@ -527,7 +521,7 @@
           },
           "position": {
             "x": 10,
-            "y": 2,
+            "y": 5,
             "width": 2,
             "height": 2
           }
@@ -543,7 +537,7 @@
           },
           "position": {
             "x": 0,
-            "y": 4,
+            "y": 7,
             "width": 12,
             "height": 1
           }
@@ -612,7 +606,7 @@
           },
           "position": {
             "x": 0,
-            "y": 5,
+            "y": 8,
             "width": 4,
             "height": 7
           }
@@ -681,7 +675,7 @@
           },
           "position": {
             "x": 4,
-            "y": 5,
+            "y": 8,
             "width": 4,
             "height": 7
           }
@@ -748,7 +742,7 @@
           },
           "position": {
             "x": 8,
-            "y": 5,
+            "y": 8,
             "width": 4,
             "height": 7
           }
@@ -764,7 +758,7 @@
           },
           "position": {
             "x": 0,
-            "y": 12,
+            "y": 15,
             "width": 12,
             "height": 1
           }
@@ -836,7 +830,7 @@
           },
           "position": {
             "x": 0,
-            "y": 13,
+            "y": 16,
             "width": 4,
             "height": 7
           }
@@ -918,7 +912,7 @@
           },
           "position": {
             "x": 4,
-            "y": 13,
+            "y": 16,
             "width": 8,
             "height": 7
           }
@@ -934,9 +928,368 @@
           },
           "position": {
             "x": 0,
-            "y": 20,
+            "y": 23,
             "width": 12,
             "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "w_runs",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "run_comparison",
+                  "fields": [
+                    {
+                      "name": "run",
+                      "expression": "`run`"
+                    },
+                    {
+                      "name": "data_covers",
+                      "expression": "`data_covers`"
+                    },
+                    {
+                      "name": "refreshed",
+                      "expression": "`refreshed`"
+                    },
+                    {
+                      "name": "trigger",
+                      "expression": "`trigger`"
+                    },
+                    {
+                      "name": "revenue",
+                      "expression": "`revenue`"
+                    },
+                    {
+                      "name": "profit",
+                      "expression": "`profit`"
+                    },
+                    {
+                      "name": "margin",
+                      "expression": "`margin`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "run",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Run",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Run"
+                  },
+                  {
+                    "fieldName": "data_covers",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Data covers",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Data covers"
+                  },
+                  {
+                    "fieldName": "refreshed",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Data refreshed (Sydney)",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Data refreshed (Sydney)"
+                  },
+                  {
+                    "fieldName": "trigger",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Trigger",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Trigger"
+                  },
+                  {
+                    "fieldName": "revenue",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100004,
+                    "title": "Revenue (30 days)",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Revenue (30 days)"
+                  },
+                  {
+                    "fieldName": "profit",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100005,
+                    "title": "Profit (30 days)",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Profit (30 days)"
+                  },
+                  {
+                    "fieldName": "margin",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100006,
+                    "title": "Margin (30 days)",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Margin (30 days)"
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "allowHTMLByDefault": false,
+              "itemsPerPage": 25,
+              "paginationSize": "default",
+              "condensed": true,
+              "withRowNumber": false,
+              "frame": {
+                "showTitle": true,
+                "title": "This run vs last run"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 12,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "w_page_status",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "page_status",
+                  "fields": [
+                    {
+                      "name": "queried",
+                      "expression": "`queried`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "queried",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Queried (Sydney)",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Queried (Sydney)"
+                  },
+                  {
+                    "fieldName": "status",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Status",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Status"
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "allowHTMLByDefault": false,
+              "itemsPerPage": 25,
+              "paginationSize": "default",
+              "condensed": true,
+              "withRowNumber": false,
+              "frame": {
+                "showTitle": true,
+                "title": "This page (prod refreshes weekly)"
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 2
           }
         }
       ]

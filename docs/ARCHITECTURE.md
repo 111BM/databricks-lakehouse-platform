@@ -60,7 +60,7 @@ big enough to need it (not verified from cluster metrics). Per-entity numbers: *
 ```
 databricks.yml                     # bundle: targets (dev/qa/prod), variables
 resources/
-  superstore_lakehouse_job.job.yml # 18-task pipeline DAG + parameters + notifications
+  superstore_lakehouse_job.job.yml # 19-task pipeline DAG + parameters + notifications
   integration_test_job.job.yml     # reset → seed → pipeline → asserts
   superstore_freshness_alert.alert.yml      # SQL alert: pipeline silence
   superstore_data_quality_alerts.alert.yml  # SQL alerts: reconciliation, orphans, drift, placeholders

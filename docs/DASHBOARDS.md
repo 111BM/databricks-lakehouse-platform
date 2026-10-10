@@ -138,10 +138,65 @@ carry files from earlier systems. It has visible effects:
 The pipeline treats it like any other file. Removing it from the source and
 reloading would remove both effects.
 
+## This run vs last run
+
+Every dashboard opens with the same strip:
+
+| Element | Shows | Source |
+|---|---|---|
+| **This run vs last run** table | Data covers (first to last order date), when the data was refreshed, what triggered the run, and the dashboard's headline numbers, for the latest run, the run before, and the change | `kpi_run_snapshot` |
+| **Page queried** | When this page ran its queries, in Sydney time | `current_timestamp()` |
+| **Status** | Fresh under 9 days, stale after: the [freshness alert](FRESHNESS_ALERT.md)'s 216 h threshold | `kpi_run_snapshot` |
+
+### Three different times
+
+A dashboard involves three times, and they are often different:
+
+1. **Data covers**: the business dates the numbers describe (order dates).
+2. **Data refreshed**: when the pipeline last wrote the tables.
+3. **Page queried**: when this page ran its queries.
+
+Data refreshed this morning can describe orders only up to last month, and a
+page opened today can show results queried yesterday. Showing all three
+removes the guesswork.
+
+Times are absolute and in Sydney time, with AEDT or AEST worked out from the
+offset rather than hardcoded. A relative age such as "0.1 h ago" is wrong in
+every screenshot and export taken later.
+
+### Why compare runs, not only periods
+
+The executive tiles compare the last 30 days with the 30 before: a business
+question. The run comparison answers a trust question: did the numbers change
+because new data arrived, or because history changed? "Data covers +7 days"
+next to higher revenue is new data. The same dates with different totals is a
+restatement: a late file, a reload, or a defect.
+
+### How the previous run is kept
+
+Each run rebuilds the KPI views, so the previous run's numbers are gone once a
+new run finishes. The last pipeline task, `kpi_run_snapshot`, records one row
+per run in `<env>_metrics.kpi_run_snapshot`: run ID, trigger, start and finish
+times, rows ingested, data period, and the headline numbers. It MERGEs on the
+run ID, so a retried task replaces its own row. A view of the same name in
+`<env>_semantic_layer` exposes it to the business dashboards, which read only
+that schema.
+
+Delta time travel was the alternative, and was rejected: `VACUUM` removes
+versions older than 7 days by default, and the pipeline runs weekly.
+
+The definitions match the dashboards: customers and orders exclude the
+'Unknown' placeholder rows, and the 30-day figures use the executive tiles'
+window. The pure part is unit-tested in `tests/unit/shared/test_kpi_snapshot.py`.
+
+History starts with the first run after the task was added; until a second
+run exists, the "Last run" row shows dashes.
+
 ## Pipeline flow, panel by panel
 
 | Panel | Source | Notes |
 |---|---|---|
+| This run vs last run | `kpi_run_snapshot` | Trigger, start time (Sydney), raw rows ingested and minutes, for the latest two runs |
 | Since last successful run | `silver_layer_metrics` | Same measure as the [freshness alert](FRESHNESS_ALERT.md): `SUCCESS` only, alert threshold 216 h |
 | Latest-run tiles | `bronze_` / `silver_` / `gold_layer_metrics` | "Latest" means the latest run that **ingested data**. An incremental run with no new files is a correct no-op, but a dashboard of zeros explains nothing |
 | Where every Bronze row ended up (Sankey) | `data_quality_checks`, `check_name = 'reconciliation'` | The [reconciliation invariant](RECONCILIATION_INVARIANT.md) drawn as a picture: `bronze = silver current + superseded + audit + quarantine` |
@@ -163,15 +218,11 @@ From the 100M-row load on 2026-10-09, before the generator was rebuilt:
 
 ## Freshness on the business dashboards
 
-The executive and customer dashboards read `<env>_semantic_layer`, not
-`<env>_metrics`, so they cannot reuse the pipeline tile. They show **"Last
-refreshed"** instead: when the tables behind the dashboard were last written,
-from Unity Catalog's `information_schema.tables.last_altered`. That is the
-question a business reader actually has: are these numbers current?
-
-The query filters on `table_schema = current_schema()`, and the current schema
-is the `dataset_schema` the bundle sets. Each environment therefore reports its
-own tables, with no environment name in the SQL.
+The business dashboards read `<env>_semantic_layer`, so their freshness comes
+from `kpi_run_snapshot` through its semantic-layer view: the "Data refreshed"
+column and the status tile. An earlier version read
+`information_schema.tables.last_altered`, which says when a table was written
+but not which run wrote it, what period it covers, or what it held before.
 
 ## Permissions
 

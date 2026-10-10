@@ -37,9 +37,9 @@ The data is the Superstore schema, synthetically generated with deliberate dirt;
   no code change; Silver, the slowest layer, took 23 min of its 60 min timeout.
   → [At 100M rows](docs/PERFORMANCE_INVESTIGATION.md#at-100m-rows)
 
-- **One job definition for every environment.** Medallion layers in an 18-task job,
+- **One job definition for every environment.** Medallion layers in a 19-task job,
   with per-task timeouts and retries set from measured runtimes.
-  → [Architecture](#architecture) · [18-task job](resources/superstore_lakehouse_job.job.yml)
+  → [Architecture](#architecture) · [19-task job](resources/superstore_lakehouse_job.job.yml)
 
 ---
 
