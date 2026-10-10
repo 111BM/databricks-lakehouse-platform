@@ -1,0 +1,1864 @@
+{
+  "datasets": [
+    {
+      "name": "run_summary",
+      "displayName": "Latest run summary",
+      "queryLines": [
+        "WITH latest AS (\n",
+        "  -- The most recent run that ingested data. An incremental run with no new\n",
+        "  -- files is a correct no-op, but a dashboard of zeros explains nothing.\n",
+        "  SELECT master_run_id\n",
+        "  FROM bronze_layer_entity_metrics\n",
+        "  WHERE rows_read > 0\n",
+        "  ORDER BY start_ts DESC\n",
+        "  LIMIT 1\n",
+        "),\n",
+        "entity_rows AS (\n",
+        "  SELECT master_run_id, 'Bronze' AS layer, entity_name AS entity, start_ts, end_ts,\n",
+        "         rows_read AS rows_in, rows_written AS rows_out,\n",
+        "         CAST(0 AS BIGINT) AS quarantined, CAST(0 AS BIGINT) AS duplicates,\n",
+        "         duration_secs, throughput_rows_per_sec\n",
+        "  FROM bronze_layer_entity_metrics\n",
+        "  UNION ALL\n",
+        "  SELECT master_run_id, 'Silver', regexp_extract(target_table, '([^.]+)$', 1), start_ts, end_ts,\n",
+        "         read_rows, inserted_rows + matched_rows, dirty_rows, duplicate_rows,\n",
+        "         duration_secs, throughput_rows_per_sec\n",
+        "  FROM silver_layer_metrics\n",
+        "  UNION ALL\n",
+        "  SELECT master_run_id, 'Gold', regexp_extract(target_table, '([^.]+)$', 1), start_ts, end_ts,\n",
+        "         read_rows, inserted_rows + updated_rows, CAST(0 AS BIGINT), CAST(0 AS BIGINT),\n",
+        "         duration_secs, throughput_rows_per_sec\n",
+        "  FROM gold_layer_metrics\n",
+        "),\n",
+        "run AS (\n",
+        "  SELECT e.*\n",
+        "  FROM entity_rows e\n",
+        "  JOIN latest l USING (master_run_id)\n",
+        "),\n",
+        "checks AS (\n",
+        "  SELECT COUNT_IF(passed) AS passed, COUNT(*) AS total\n",
+        "  FROM data_quality_checks\n",
+        "  JOIN latest USING (master_run_id)\n",
+        ")\n",
+        "SELECT\n",
+        "  -- Every Bronze entity reads the same raw rows, so MAX (not SUM) is the raw count.\n",
+        "  MAX(IF(layer = 'Bronze', rows_in, NULL))                       AS raw_rows,\n",
+        "  SUM(IF(layer = 'Silver', quarantined, 0))                      AS quarantined,\n",
+        "  SUM(IF(layer = 'Silver', rows_out, 0))                         AS silver_rows,\n",
+        "  SUM(IF(layer = 'Gold', rows_out, 0))                           AS gold_rows,\n",
+        "  -- Wall clock from the first Bronze start to the last Gold finish.\n",
+        "  ROUND((unix_timestamp(MAX(end_ts)) - unix_timestamp(MIN(start_ts))) / 60, 1) AS minutes,\n",
+        "  CONCAT(MAX(c.passed), ' / ', MAX(c.total))                      AS checks_passed,\n",
+        "  DATE_FORMAT(MIN(start_ts), 'd MMM yyyy HH:mm')                 AS run_started\n",
+        "FROM run\n",
+        "CROSS JOIN checks c\n"
+      ]
+    },
+    {
+      "name": "row_outcomes",
+      "displayName": "Where every Bronze row ended up",
+      "queryLines": [
+        "-- The reconciliation check (docs/RECONCILIATION_INVARIANT.md) accounts for every\n",
+        "-- Bronze row in exactly one place. Its details are the flow of the platform:\n",
+        "--   bronze_rows = silver (current) + superseded + audit (duplicates) + quarantine\n",
+        "WITH latest AS (\n",
+        "  SELECT master_run_id\n",
+        "  FROM data_quality_checks\n",
+        "  WHERE check_name = 'reconciliation'\n",
+        "  ORDER BY checked_at DESC\n",
+        "  LIMIT 1\n",
+        "),\n",
+        "rec AS (\n",
+        "  SELECT\n",
+        "    subject AS entity,\n",
+        "    from_json(details, 'silver_rows BIGINT, superseded_rows BIGINT, audit_rows BIGINT, quarantine_rows BIGINT') AS d\n",
+        "  FROM data_quality_checks\n",
+        "  JOIN latest USING (master_run_id)\n",
+        "  WHERE check_name = 'reconciliation'\n",
+        ")\n",
+        "SELECT CONCAT('Bronze: ', entity) AS source, outcome, row_count\n",
+        "FROM rec\n",
+        "LATERAL VIEW stack(4,\n",
+        "  'Silver (current)',              d.silver_rows,\n",
+        "  'Silver (superseded version)',   d.superseded_rows,\n",
+        "  'Audit (duplicate)',             d.audit_rows,\n",
+        "  'Quarantine (failed a rule)',    d.quarantine_rows\n",
+        ") AS outcome, row_count\n",
+        "WHERE row_count > 0\n"
+      ]
+    },
+    {
+      "name": "entity_detail",
+      "displayName": "Latest run by layer and entity",
+      "queryLines": [
+        "WITH latest AS (\n",
+        "  -- The most recent run that ingested data. An incremental run with no new\n",
+        "  -- files is a correct no-op, but a dashboard of zeros explains nothing.\n",
+        "  SELECT master_run_id\n",
+        "  FROM bronze_layer_entity_metrics\n",
+        "  WHERE rows_read > 0\n",
+        "  ORDER BY start_ts DESC\n",
+        "  LIMIT 1\n",
+        "),\n",
+        "entity_rows AS (\n",
+        "  SELECT master_run_id, 'Bronze' AS layer, entity_name AS entity, start_ts, end_ts,\n",
+        "         rows_read AS rows_in, rows_written AS rows_out,\n",
+        "         CAST(0 AS BIGINT) AS quarantined, CAST(0 AS BIGINT) AS duplicates,\n",
+        "         duration_secs, throughput_rows_per_sec\n",
+        "  FROM bronze_layer_entity_metrics\n",
+        "  UNION ALL\n",
+        "  SELECT master_run_id, 'Silver', regexp_extract(target_table, '([^.]+)$', 1), start_ts, end_ts,\n",
+        "         read_rows, inserted_rows + matched_rows, dirty_rows, duplicate_rows,\n",
+        "         duration_secs, throughput_rows_per_sec\n",
+        "  FROM silver_layer_metrics\n",
+        "  UNION ALL\n",
+        "  SELECT master_run_id, 'Gold', regexp_extract(target_table, '([^.]+)$', 1), start_ts, end_ts,\n",
+        "         read_rows, inserted_rows + updated_rows, CAST(0 AS BIGINT), CAST(0 AS BIGINT),\n",
+        "         duration_secs, throughput_rows_per_sec\n",
+        "  FROM gold_layer_metrics\n",
+        ")\n",
+        "SELECT\n",
+        "  layer,\n",
+        "  entity,\n",
+        "  rows_in,\n",
+        "  rows_out,\n",
+        "  quarantined,\n",
+        "  duplicates,\n",
+        "  duration_secs,\n",
+        "  CAST(throughput_rows_per_sec AS BIGINT) AS rows_per_sec,\n",
+        "  CASE layer WHEN 'Bronze' THEN 1 WHEN 'Silver' THEN 2 ELSE 3 END AS layer_order\n",
+        "FROM entity_rows\n",
+        "JOIN latest USING (master_run_id)\n",
+        "ORDER BY layer_order, entity\n"
+      ]
+    },
+    {
+      "name": "silver_quarantine",
+      "displayName": "Quarantined rows by entity, latest run",
+      "queryLines": [
+        "WITH latest AS (\n",
+        "  -- The most recent run that ingested data. An incremental run with no new\n",
+        "  -- files is a correct no-op, but a dashboard of zeros explains nothing.\n",
+        "  SELECT master_run_id\n",
+        "  FROM bronze_layer_entity_metrics\n",
+        "  WHERE rows_read > 0\n",
+        "  ORDER BY start_ts DESC\n",
+        "  LIMIT 1\n",
+        ")\n",
+        "SELECT regexp_extract(target_table, '([^.]+)$', 1) AS entity, dirty_rows AS quarantined\n",
+        "FROM silver_layer_metrics\n",
+        "JOIN latest USING (master_run_id)\n"
+      ]
+    },
+    {
+      "name": "run_history",
+      "displayName": "Minutes and rows per layer, per run",
+      "queryLines": [
+        "WITH entity_rows AS (\n",
+        "  SELECT master_run_id, 'Bronze' AS layer, entity_name AS entity, start_ts, end_ts,\n",
+        "         rows_read AS rows_in, rows_written AS rows_out,\n",
+        "         CAST(0 AS BIGINT) AS quarantined, CAST(0 AS BIGINT) AS duplicates,\n",
+        "         duration_secs, throughput_rows_per_sec\n",
+        "  FROM bronze_layer_entity_metrics\n",
+        "  UNION ALL\n",
+        "  SELECT master_run_id, 'Silver', regexp_extract(target_table, '([^.]+)$', 1), start_ts, end_ts,\n",
+        "         read_rows, inserted_rows + matched_rows, dirty_rows, duplicate_rows,\n",
+        "         duration_secs, throughput_rows_per_sec\n",
+        "  FROM silver_layer_metrics\n",
+        "  UNION ALL\n",
+        "  SELECT master_run_id, 'Gold', regexp_extract(target_table, '([^.]+)$', 1), start_ts, end_ts,\n",
+        "         read_rows, inserted_rows + updated_rows, CAST(0 AS BIGINT), CAST(0 AS BIGINT),\n",
+        "         duration_secs, throughput_rows_per_sec\n",
+        "  FROM gold_layer_metrics\n",
+        "),\n",
+        "runs AS (\n",
+        "  -- Runs that ingested data; no-op incremental runs would only add empty bars.\n",
+        "  SELECT master_run_id, MIN(start_ts) AS run_start\n",
+        "  FROM entity_rows\n",
+        "  GROUP BY master_run_id\n",
+        "  HAVING MAX(IF(layer = 'Bronze', rows_in, 0)) > 0\n",
+        ")\n",
+        "SELECT\n",
+        "  DATE_FORMAT(r.run_start, 'yyyy-MM-dd HH:mm') AS run,\n",
+        "  e.layer,\n",
+        "  -- Wall clock per layer: Gold builds dimensions and facts in parallel, so\n",
+        "  -- summing per-entity durations would overstate it.\n",
+        "  ROUND((unix_timestamp(MAX(e.end_ts)) - unix_timestamp(MIN(e.start_ts))) / 60, 1) AS minutes,\n",
+        "  SUM(e.rows_out) AS rows_out\n",
+        "FROM entity_rows e\n",
+        "JOIN runs r USING (master_run_id)\n",
+        "GROUP BY r.run_start, e.layer\n"
+      ]
+    },
+    {
+      "name": "freshness",
+      "displayName": "Hours since the last successful Silver run",
+      "queryLines": [
+        "-- The same measure as the freshness alert (resources/superstore_freshness_alert.alert.yml):\n",
+        "-- SUCCESS only, because a SKIPPED (no new data) run proves nothing about processing.\n",
+        "SELECT\n",
+        "  COALESCE(\n",
+        "    CONCAT(FORMAT_NUMBER((unix_timestamp(current_timestamp()) - unix_timestamp(MAX(end_ts))) / 3600.0, 1), ' h'),\n",
+        "    'never'\n",
+        "  ) AS hours_since_success\n",
+        "FROM silver_layer_metrics\n",
+        "WHERE run_status = 'SUCCESS'\n"
+      ]
+    },
+    {
+      "name": "load_status",
+      "displayName": "Entity loads by status, per run",
+      "queryLines": [
+        "-- Every run, including no-op incremental runs: reliability is about all of them.\n",
+        "WITH loads AS (\n",
+        "  SELECT master_run_id, start_ts, run_status FROM bronze_layer_entity_metrics\n",
+        "  UNION ALL\n",
+        "  SELECT master_run_id, start_ts, run_status FROM silver_layer_metrics\n",
+        "  UNION ALL\n",
+        "  SELECT master_run_id, start_ts, run_status FROM gold_layer_metrics\n",
+        "),\n",
+        "runs AS (\n",
+        "  SELECT master_run_id, MIN(start_ts) AS run_start FROM loads GROUP BY master_run_id\n",
+        ")\n",
+        "SELECT DATE_FORMAT(r.run_start, 'yyyy-MM-dd HH:mm') AS run, l.run_status, COUNT(*) AS loads\n",
+        "FROM loads l\n",
+        "JOIN runs r USING (master_run_id)\n",
+        "GROUP BY r.run_start, l.run_status\n"
+      ]
+    },
+    {
+      "name": "dq_history",
+      "displayName": "Data quality checks passed and failed, per run",
+      "queryLines": [
+        "WITH runs AS (\n",
+        "  SELECT master_run_id, MIN(checked_at) AS checked FROM data_quality_checks GROUP BY master_run_id\n",
+        ")\n",
+        "SELECT\n",
+        "  DATE_FORMAT(r.checked, 'yyyy-MM-dd HH:mm') AS run,\n",
+        "  IF(c.passed, 'Passed', 'Failed') AS result,\n",
+        "  COUNT(*) AS checks\n",
+        "FROM data_quality_checks c\n",
+        "JOIN runs r USING (master_run_id)\n",
+        "GROUP BY r.checked, c.passed\n"
+      ]
+    },
+    {
+      "name": "dq_checks",
+      "displayName": "Data quality checks, latest run",
+      "queryLines": [
+        "WITH latest AS (\n",
+        "  SELECT master_run_id FROM data_quality_checks ORDER BY checked_at DESC LIMIT 1\n",
+        ")\n",
+        "SELECT\n",
+        "  IF(passed, 'Pass', 'FAIL') AS result,\n",
+        "  check_name,\n",
+        "  subject,\n",
+        "  observed_value,\n",
+        "  expected_value\n",
+        "FROM data_quality_checks\n",
+        "JOIN latest USING (master_run_id)\n",
+        "ORDER BY passed, check_name, subject\n"
+      ]
+    },
+    {
+      "name": "schema_drift",
+      "displayName": "Schema drift log",
+      "queryLines": [
+        "SELECT DATE_FORMAT(detected_at, 'yyyy-MM-dd HH:mm') AS detected, column_name, drift_status, row_count\n",
+        "FROM schema_drift\n",
+        "ORDER BY detected_at DESC\n",
+        "LIMIT 50\n"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "pipeline",
+      "displayName": "Pipeline flow",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "t_title",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# <span style=\"font-size:40px;line-height:1.4\">**Pipeline flow: Bronze → Silver → Gold**</span>\n",
+                "Built from the pipeline's own run metrics. The tiles and tables show the **latest run that ingested data**."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 9,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c_fresh",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "freshness",
+                  "fields": [
+                    {
+                      "name": "hours_since_success",
+                      "expression": "`hours_since_success`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": "Since last successful run (alert at 216 h)"
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "hours_since_success"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c_raw",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "run_summary",
+                  "fields": [
+                    {
+                      "name": "raw_rows",
+                      "expression": "`raw_rows`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": "Raw rows ingested"
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "raw_rows",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c_quar",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "run_summary",
+                  "fields": [
+                    {
+                      "name": "quarantined",
+                      "expression": "`quarantined`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": "Rows quarantined (all entities)"
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "quarantined",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 2,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c_silver",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "run_summary",
+                  "fields": [
+                    {
+                      "name": "silver_rows",
+                      "expression": "`silver_rows`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": "Silver rows written"
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "silver_rows",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c_gold",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "run_summary",
+                  "fields": [
+                    {
+                      "name": "gold_rows",
+                      "expression": "`gold_rows`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": "Gold rows written"
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "gold_rows",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c_min",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "run_summary",
+                  "fields": [
+                    {
+                      "name": "minutes",
+                      "expression": "`minutes`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": "Bronze → Gold minutes"
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "minutes"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c_dq",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "run_summary",
+                  "fields": [
+                    {
+                      "name": "checks_passed",
+                      "expression": "`checks_passed`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": "Data quality checks passed"
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "checks_passed"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 10,
+            "y": 2,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "t_flow",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Where the data goes"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "w_flow",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "row_outcomes",
+                  "fields": [
+                    {
+                      "name": "source",
+                      "expression": "`source`"
+                    },
+                    {
+                      "name": "outcome",
+                      "expression": "`outcome`"
+                    },
+                    {
+                      "name": "rows",
+                      "expression": "SUM(`row_count`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "sankey",
+              "frame": {
+                "showTitle": true,
+                "title": "Where every Bronze row ended up (reconciled)"
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "rows",
+                  "displayName": "Rows"
+                },
+                "stages": [
+                  {
+                    "fieldName": "source",
+                    "displayName": "Bronze"
+                  },
+                  {
+                    "fieldName": "outcome",
+                    "displayName": "Outcome"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 8,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "t_flow_note",
+            "multilineTextboxSpec": {
+              "lines": [
+                "**How to read this**\n",
+                "Each entity reads every raw row from Bronze. Silver sends each row to exactly one place:\n",
+                "- **Silver (current):** the live record\n",
+                "- **Superseded:** an older version replaced by a newer one\n",
+                "- **Audit:** an exact duplicate, kept for traceability\n",
+                "- **Quarantine:** failed a validation rule\n",
+                "\nThe reconciliation check fails the run unless these four add up to the Bronze count. Most order quarantines come from source rows whose ship date is before the order date."
+              ]
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 5,
+            "width": 4,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "t_layers",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Latest run by layer and entity"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 14,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "w_detail",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "entity_detail",
+                  "fields": [
+                    {
+                      "name": "layer",
+                      "expression": "`layer`"
+                    },
+                    {
+                      "name": "entity",
+                      "expression": "`entity`"
+                    },
+                    {
+                      "name": "rows_in",
+                      "expression": "`rows_in`"
+                    },
+                    {
+                      "name": "rows_out",
+                      "expression": "`rows_out`"
+                    },
+                    {
+                      "name": "quarantined",
+                      "expression": "`quarantined`"
+                    },
+                    {
+                      "name": "duplicates",
+                      "expression": "`duplicates`"
+                    },
+                    {
+                      "name": "duration_secs",
+                      "expression": "`duration_secs`"
+                    },
+                    {
+                      "name": "rows_per_sec",
+                      "expression": "`rows_per_sec`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "layer",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Layer",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Layer"
+                  },
+                  {
+                    "fieldName": "entity",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Entity",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Entity"
+                  },
+                  {
+                    "fieldName": "rows_in",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Rows in",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Rows in",
+                    "numberFormat": "0,0"
+                  },
+                  {
+                    "fieldName": "rows_out",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Rows written",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Rows written",
+                    "numberFormat": "0,0"
+                  },
+                  {
+                    "fieldName": "quarantined",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100004,
+                    "title": "Quarantined",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Quarantined",
+                    "numberFormat": "0,0"
+                  },
+                  {
+                    "fieldName": "duplicates",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100005,
+                    "title": "Duplicates",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Duplicates",
+                    "numberFormat": "0,0"
+                  },
+                  {
+                    "fieldName": "duration_secs",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100006,
+                    "title": "Seconds",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Seconds",
+                    "numberFormat": "0,0"
+                  },
+                  {
+                    "fieldName": "rows_per_sec",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100007,
+                    "title": "Rows / sec",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Rows / sec",
+                    "numberFormat": "0,0"
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "allowHTMLByDefault": false,
+              "itemsPerPage": 25,
+              "paginationSize": "default",
+              "condensed": true,
+              "withRowNumber": false,
+              "frame": {
+                "showTitle": true,
+                "title": "Rows and timing per entity"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 15,
+            "width": 8,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "w_quar",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "silver_quarantine",
+                  "fields": [
+                    {
+                      "name": "entity",
+                      "expression": "`entity`"
+                    },
+                    {
+                      "name": "quarantined",
+                      "expression": "SUM(`quarantined`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": "Quarantined rows by entity (Silver)"
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "entity",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  },
+                  "axis": {
+                    "title": "Entity"
+                  },
+                  "displayName": "Entity"
+                },
+                "y": {
+                  "fieldName": "quarantined",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Rows"
+                  },
+                  "displayName": "Rows",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 15,
+            "width": 4,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "t_hist",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Run history"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 23,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "w_minutes",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "run_history",
+                  "fields": [
+                    {
+                      "name": "run",
+                      "expression": "`run`"
+                    },
+                    {
+                      "name": "minutes",
+                      "expression": "SUM(`minutes`)"
+                    },
+                    {
+                      "name": "layer",
+                      "expression": "`layer`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": "Minutes per layer, per run"
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "run",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "axis": {
+                    "title": "Run"
+                  },
+                  "displayName": "Run"
+                },
+                "y": {
+                  "fieldName": "minutes",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Minutes"
+                  },
+                  "displayName": "Minutes"
+                },
+                "color": {
+                  "fieldName": "layer",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Bronze",
+                        "color": "#B87333"
+                      },
+                      {
+                        "value": "Silver",
+                        "color": "#8E9AA6"
+                      },
+                      {
+                        "value": "Gold",
+                        "color": "#D4A72C"
+                      }
+                    ]
+                  }
+                }
+              },
+              "mark": {
+                "layout": "stack"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 24,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "w_rows",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "run_history",
+                  "fields": [
+                    {
+                      "name": "run",
+                      "expression": "`run`"
+                    },
+                    {
+                      "name": "rows_out",
+                      "expression": "SUM(`rows_out`)"
+                    },
+                    {
+                      "name": "layer",
+                      "expression": "`layer`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": "Rows written per layer, per run"
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "run",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "axis": {
+                    "title": "Run"
+                  },
+                  "displayName": "Run"
+                },
+                "y": {
+                  "fieldName": "rows_out",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Rows written"
+                  },
+                  "displayName": "Rows written",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "layer",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Bronze",
+                        "color": "#B87333"
+                      },
+                      {
+                        "value": "Silver",
+                        "color": "#8E9AA6"
+                      },
+                      {
+                        "value": "Gold",
+                        "color": "#D4A72C"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 24,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "t_rel",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Reliability: every run, including runs with no new data"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 31,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "w_status",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "load_status",
+                  "fields": [
+                    {
+                      "name": "run",
+                      "expression": "`run`"
+                    },
+                    {
+                      "name": "loads",
+                      "expression": "SUM(`loads`)"
+                    },
+                    {
+                      "name": "run_status",
+                      "expression": "`run_status`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": "Entity loads by status, per run"
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "run",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "axis": {
+                    "title": "Run"
+                  },
+                  "displayName": "Run"
+                },
+                "y": {
+                  "fieldName": "loads",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Loads"
+                  },
+                  "displayName": "Loads"
+                },
+                "color": {
+                  "fieldName": "run_status",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "SUCCESS",
+                        "color": "#00A972"
+                      },
+                      {
+                        "value": "SKIPPED",
+                        "color": "#8E9AA6"
+                      },
+                      {
+                        "value": "FAILED",
+                        "color": "#FF3621"
+                      }
+                    ]
+                  }
+                }
+              },
+              "mark": {
+                "layout": "stack"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 32,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "w_dq_hist",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dq_history",
+                  "fields": [
+                    {
+                      "name": "run",
+                      "expression": "`run`"
+                    },
+                    {
+                      "name": "checks",
+                      "expression": "SUM(`checks`)"
+                    },
+                    {
+                      "name": "result",
+                      "expression": "`result`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": "Data quality checks per run"
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "run",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "axis": {
+                    "title": "Run"
+                  },
+                  "displayName": "Run"
+                },
+                "y": {
+                  "fieldName": "checks",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Checks"
+                  },
+                  "displayName": "Checks"
+                },
+                "color": {
+                  "fieldName": "result",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Passed",
+                        "color": "#00A972"
+                      },
+                      {
+                        "value": "Failed",
+                        "color": "#FF3621"
+                      }
+                    ]
+                  }
+                }
+              },
+              "mark": {
+                "layout": "stack"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 32,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "t_dq",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Data quality"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 39,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "w_dq",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dq_checks",
+                  "fields": [
+                    {
+                      "name": "result",
+                      "expression": "`result`"
+                    },
+                    {
+                      "name": "check_name",
+                      "expression": "`check_name`"
+                    },
+                    {
+                      "name": "subject",
+                      "expression": "`subject`"
+                    },
+                    {
+                      "name": "observed_value",
+                      "expression": "`observed_value`"
+                    },
+                    {
+                      "name": "expected_value",
+                      "expression": "`expected_value`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "result",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Result",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Result"
+                  },
+                  {
+                    "fieldName": "check_name",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Check",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Check"
+                  },
+                  {
+                    "fieldName": "subject",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Subject",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Subject"
+                  },
+                  {
+                    "fieldName": "observed_value",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Observed",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Observed",
+                    "numberFormat": "0,0.[00]"
+                  },
+                  {
+                    "fieldName": "expected_value",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100004,
+                    "title": "Expected",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Expected",
+                    "numberFormat": "0,0.[00]"
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "allowHTMLByDefault": false,
+              "itemsPerPage": 25,
+              "paginationSize": "default",
+              "condensed": true,
+              "withRowNumber": false,
+              "frame": {
+                "showTitle": true,
+                "title": "Checks on the latest run"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 40,
+            "width": 7,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "w_drift",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "schema_drift",
+                  "fields": [
+                    {
+                      "name": "detected",
+                      "expression": "`detected`"
+                    },
+                    {
+                      "name": "column_name",
+                      "expression": "`column_name`"
+                    },
+                    {
+                      "name": "drift_status",
+                      "expression": "`drift_status`"
+                    },
+                    {
+                      "name": "row_count",
+                      "expression": "`row_count`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "detected",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Detected",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Detected"
+                  },
+                  {
+                    "fieldName": "column_name",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Column",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Column"
+                  },
+                  {
+                    "fieldName": "drift_status",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Status",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Status"
+                  },
+                  {
+                    "fieldName": "row_count",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Rows",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "displayName": "Rows",
+                    "numberFormat": "0,0"
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "allowHTMLByDefault": false,
+              "itemsPerPage": 25,
+              "paginationSize": "default",
+              "condensed": true,
+              "withRowNumber": false,
+              "frame": {
+                "showTitle": true,
+                "title": "Schema drift log"
+              }
+            }
+          },
+          "position": {
+            "x": 7,
+            "y": 40,
+            "width": 5,
+            "height": 8
+          }
+        }
+      ]
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "canvasBackgroundColor": {
+        "light": "#1D9E9E",
+        "dark": "#1F272D"
+      },
+      "widgetBackgroundColor": {
+        "light": "#FFFFFF",
+        "dark": "#11171C"
+      },
+      "fontColor": {
+        "light": "#11171C",
+        "dark": "#E8ECF0"
+      },
+      "selectionColor": {
+        "light": "#2272B4",
+        "dark": "#8ACAFF"
+      },
+      "widgetHeaderAlignment": "LEFT"
+    },
+    "applyModeEnabled": false
+  }
+}

@@ -1,0 +1,967 @@
+{
+  "datasets": [
+    {
+      "name": "kpi_30d",
+      "displayName": "KPIs: last 30 days vs previous 30 days",
+      "queryLines": [
+        "-- Trailing 30 days vs the 30 before, ending at the last order date in the data.\n",
+        "-- A single day is a poor KPI window here: the newest day can be a partial\n",
+        "-- load (a handful of rows), which turned \"latest day revenue\" into $0.00M.\n",
+        "WITH bounds AS (\n",
+        "  SELECT MAX(order_date) AS last_day FROM metrics_daily_kpi\n",
+        "),\n",
+        "periods AS (\n",
+        "  SELECT\n",
+        "    SUM(IF(d.order_date >  DATE_SUB(b.last_day, 30), d.total_sales,  0)) AS sales_cur,\n",
+        "    SUM(IF(d.order_date <= DATE_SUB(b.last_day, 30), d.total_sales,  0)) AS sales_prev,\n",
+        "    SUM(IF(d.order_date >  DATE_SUB(b.last_day, 30), d.total_profit, 0)) AS profit_cur,\n",
+        "    SUM(IF(d.order_date <= DATE_SUB(b.last_day, 30), d.total_profit, 0)) AS profit_prev,\n",
+        "    MAX(b.last_day) AS last_day\n",
+        "  FROM metrics_daily_kpi d\n",
+        "  CROSS JOIN bounds b\n",
+        "  WHERE d.order_date > DATE_SUB(b.last_day, 60)\n",
+        "),\n",
+        "calc AS (\n",
+        "  SELECT\n",
+        "    *,\n",
+        "    -- ABS() in the denominator keeps the arrow honest when profit is negative:\n",
+        "    -- a loss shrinking from -100 to -80 is an improvement (+20%), not -20%.\n",
+        "    (sales_cur  - sales_prev)  / NULLIF(ABS(sales_prev), 0)  AS sales_change,\n",
+        "    (profit_cur - profit_prev) / NULLIF(ABS(profit_prev), 0) AS profit_change,\n",
+        "    profit_cur  / NULLIF(sales_cur, 0)  AS margin_cur,\n",
+        "    profit_prev / NULLIF(sales_prev, 0) AS margin_prev\n",
+        "  FROM periods\n",
+        ")\n",
+        "SELECT\n",
+        "  sales_cur  AS revenue,\n",
+        "  profit_cur AS profit,\n",
+        "  margin_cur AS margin,\n",
+        "  CONCAT(IF(sales_change  >= 0, '▲ ', '▼ '), FORMAT_NUMBER(ABS(sales_change)  * 100, 1), '%') AS revenue_change,\n",
+        "  CONCAT(IF(profit_change >= 0, '▲ ', '▼ '), FORMAT_NUMBER(ABS(profit_change) * 100, 1), '%') AS profit_change,\n",
+        "  -- Margin moves in percentage points; a \"% change of a margin\" is unreadable.\n",
+        "  CONCAT(IF(margin_cur >= margin_prev, '▲ ', '▼ '),\n",
+        "         FORMAT_NUMBER(ABS(margin_cur - margin_prev) * 100, 2), ' pp') AS margin_change,\n",
+        "  DATE_FORMAT(last_day, 'd MMM yyyy') AS data_through\n",
+        "FROM calc\n"
+      ]
+    },
+    {
+      "name": "weekly",
+      "displayName": "Weekly sales, profit and margin",
+      "queryLines": [
+        "-- Complete weeks only, so a partially loaded final week does not plunge the trend.\n",
+        "SELECT\n",
+        "  DATE_TRUNC('WEEK', order_date)          AS week,\n",
+        "  SUM(total_sales)                        AS sales,\n",
+        "  SUM(total_profit)                       AS profit,\n",
+        "  SUM(total_profit) / SUM(total_sales)    AS margin\n",
+        "FROM metrics_daily_kpi\n",
+        "GROUP BY 1\n",
+        "HAVING COUNT(*) = 7\n"
+      ]
+    },
+    {
+      "name": "refreshed",
+      "displayName": "When the tables behind this dashboard were last written",
+      "queryLines": [
+        "-- last_altered moves on every write, so this is when the pipeline last refreshed\n",
+        "-- these tables. current_schema() is the dataset schema the bundle sets per\n",
+        "-- environment, so dev, qa and prod each report their own tables.\n",
+        "SELECT\n",
+        "  CONCAT(FORMAT_NUMBER((unix_timestamp(current_timestamp()) - unix_timestamp(MAX(last_altered))) / 3600.0, 1), ' h ago') AS refreshed\n",
+        "FROM information_schema.tables\n",
+        "WHERE table_schema = current_schema()\n",
+        "  AND table_name IN ('metrics_daily_kpi', 'product_insights_kpi')\n"
+      ]
+    },
+    {
+      "name": "category_mix",
+      "displayName": "Sales by category",
+      "queryLines": [
+        "SELECT category, SUM(total_sales) AS sales, SUM(total_profit) AS profit\n",
+        "FROM product_insights_kpi\n",
+        "WHERE category <> 'Unknown'\n",
+        "GROUP BY category\n"
+      ]
+    },
+    {
+      "name": "top_subcategories",
+      "displayName": "Top 15 sub-categories by revenue",
+      "queryLines": [
+        "-- Top 15 only: the generator also emits ~250k one-off \"Random Product\" rows,\n",
+        "-- each with its own numeric sub-category, which would bury the real ones.\n",
+        "SELECT category, sub_category, SUM(total_sales) AS sales\n",
+        "FROM product_insights_kpi\n",
+        "WHERE category <> 'Unknown'\n",
+        "GROUP BY category, sub_category\n",
+        "ORDER BY sales DESC\n",
+        "LIMIT 15\n"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "executive",
+      "displayName": "Executive overview",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "t_title",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# <span style=\"font-size:40px;line-height:1.4\">**Executive overview**</span>\n",
+                "KPIs compare the **last 30 days** with the 30 days before, ending at the latest order date in the data."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c_through",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpi_30d",
+                  "fields": [
+                    {
+                      "name": "data_through",
+                      "expression": "`data_through`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": "Data through"
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "data_through"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c_refreshed",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "refreshed",
+                  "fields": [
+                    {
+                      "name": "refreshed",
+                      "expression": "`refreshed`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": "Last refreshed"
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "refreshed"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c_rev",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpi_30d",
+                  "fields": [
+                    {
+                      "name": "revenue",
+                      "expression": "`revenue`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": "Revenue (30 days)"
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "revenue",
+                  "format": {
+                    "type": "number-currency",
+                    "currencyCode": "USD",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c_rev_chg",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpi_30d",
+                  "fields": [
+                    {
+                      "name": "revenue_change",
+                      "expression": "`revenue_change`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": "Revenue vs previous 30 days"
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "revenue_change",
+                  "style": {
+                    "rules": [
+                      {
+                        "condition": {
+                          "operator": "contains",
+                          "operand": {
+                            "type": "data-value",
+                            "value": "▲"
+                          }
+                        },
+                        "color": "#00A972"
+                      },
+                      {
+                        "condition": {
+                          "operator": "contains",
+                          "operand": {
+                            "type": "data-value",
+                            "value": "▼"
+                          }
+                        },
+                        "color": "#FF3621"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 2,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c_profit",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpi_30d",
+                  "fields": [
+                    {
+                      "name": "profit",
+                      "expression": "`profit`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": "Profit (30 days)"
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "profit",
+                  "format": {
+                    "type": "number-currency",
+                    "currencyCode": "USD",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c_profit_chg",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpi_30d",
+                  "fields": [
+                    {
+                      "name": "profit_change",
+                      "expression": "`profit_change`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": "Profit vs previous 30 days"
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "profit_change",
+                  "style": {
+                    "rules": [
+                      {
+                        "condition": {
+                          "operator": "contains",
+                          "operand": {
+                            "type": "data-value",
+                            "value": "▲"
+                          }
+                        },
+                        "color": "#00A972"
+                      },
+                      {
+                        "condition": {
+                          "operator": "contains",
+                          "operand": {
+                            "type": "data-value",
+                            "value": "▼"
+                          }
+                        },
+                        "color": "#FF3621"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c_margin",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpi_30d",
+                  "fields": [
+                    {
+                      "name": "margin",
+                      "expression": "`margin`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": "Margin (30 days)"
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "margin",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c_margin_chg",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpi_30d",
+                  "fields": [
+                    {
+                      "name": "margin_change",
+                      "expression": "`margin_change`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": "Margin vs previous 30 days"
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "margin_change",
+                  "style": {
+                    "rules": [
+                      {
+                        "condition": {
+                          "operator": "contains",
+                          "operand": {
+                            "type": "data-value",
+                            "value": "▲"
+                          }
+                        },
+                        "color": "#00A972"
+                      },
+                      {
+                        "condition": {
+                          "operator": "contains",
+                          "operand": {
+                            "type": "data-value",
+                            "value": "▼"
+                          }
+                        },
+                        "color": "#FF3621"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 10,
+            "y": 2,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "t_trends",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Weekly trends (complete weeks only)"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "w_sales",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "weekly",
+                  "fields": [
+                    {
+                      "name": "week",
+                      "expression": "`week`"
+                    },
+                    {
+                      "name": "sales",
+                      "expression": "SUM(`sales`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "frame": {
+                "showTitle": true,
+                "title": "Weekly revenue"
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "week",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "title": "Week"
+                  },
+                  "displayName": "Week"
+                },
+                "y": {
+                  "fieldName": "sales",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Revenue"
+                  },
+                  "displayName": "Revenue",
+                  "format": {
+                    "type": "number-currency",
+                    "currencyCode": "USD",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 4,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "w_profit",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "weekly",
+                  "fields": [
+                    {
+                      "name": "week",
+                      "expression": "`week`"
+                    },
+                    {
+                      "name": "profit",
+                      "expression": "SUM(`profit`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "frame": {
+                "showTitle": true,
+                "title": "Weekly profit"
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "week",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "title": "Week"
+                  },
+                  "displayName": "Week"
+                },
+                "y": {
+                  "fieldName": "profit",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Profit"
+                  },
+                  "displayName": "Profit",
+                  "format": {
+                    "type": "number-currency",
+                    "currencyCode": "USD",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 5,
+            "width": 4,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "w_margin",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "weekly",
+                  "fields": [
+                    {
+                      "name": "week",
+                      "expression": "`week`"
+                    },
+                    {
+                      "name": "margin",
+                      "expression": "AVG(`margin`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "frame": {
+                "showTitle": true,
+                "title": "Weekly margin"
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "week",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "title": "Week"
+                  },
+                  "displayName": "Week"
+                },
+                "y": {
+                  "fieldName": "margin",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Margin"
+                  },
+                  "displayName": "Margin",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 5,
+            "width": 4,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "t_mix",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Category mix"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "w_cat",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "category_mix",
+                  "fields": [
+                    {
+                      "name": "category",
+                      "expression": "`category`"
+                    },
+                    {
+                      "name": "sales",
+                      "expression": "SUM(`sales`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": "Revenue by category"
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "category",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  },
+                  "axis": {
+                    "title": "Category"
+                  },
+                  "displayName": "Category"
+                },
+                "y": {
+                  "fieldName": "sales",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Revenue"
+                  },
+                  "displayName": "Revenue",
+                  "format": {
+                    "type": "number-currency",
+                    "currencyCode": "USD",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 13,
+            "width": 4,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "w_subcat",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "top_subcategories",
+                  "fields": [
+                    {
+                      "name": "sub_category",
+                      "expression": "`sub_category`"
+                    },
+                    {
+                      "name": "sales",
+                      "expression": "SUM(`sales`)"
+                    },
+                    {
+                      "name": "category",
+                      "expression": "`category`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": "Top 15 sub-categories by revenue"
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "sub_category",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  },
+                  "axis": {
+                    "title": "Sub-category"
+                  },
+                  "displayName": "Sub-category"
+                },
+                "y": {
+                  "fieldName": "sales",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Revenue"
+                  },
+                  "displayName": "Revenue",
+                  "format": {
+                    "type": "number-currency",
+                    "currencyCode": "USD",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "category",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 13,
+            "width": 8,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "t_note",
+            "multilineTextboxSpec": {
+              "lines": [
+                "*The source data is synthetic. The generator produces a margin of about −10%, so losses are expected. I traced them back to the raw CSV, so the pipeline reports the data as it is, unchanged.*"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 20,
+            "width": 12,
+            "height": 1
+          }
+        }
+      ]
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "canvasBackgroundColor": {
+        "light": "#1D9E9E",
+        "dark": "#1F272D"
+      },
+      "widgetBackgroundColor": {
+        "light": "#FFFFFF",
+        "dark": "#11171C"
+      },
+      "fontColor": {
+        "light": "#11171C",
+        "dark": "#E8ECF0"
+      },
+      "selectionColor": {
+        "light": "#2272B4",
+        "dark": "#8ACAFF"
+      },
+      "widgetHeaderAlignment": "LEFT"
+    },
+    "applyModeEnabled": false
+  }
+}

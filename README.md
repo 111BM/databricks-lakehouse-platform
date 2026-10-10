@@ -159,7 +159,7 @@ Prerequisites, and first-time setup in a new workspace (service principals, Slac
 
 | Topic | Documents |
 |---|---|
-| Design | [Architecture](docs/ARCHITECTURE.md) · [Testing strategy](docs/TESTING_STRATEGY.md) · [CI/CD pipeline](docs/CI_CD_PIPELINE.md) · [Getting started](docs/GETTING_STARTED.md) |
+| Design | [Architecture](docs/ARCHITECTURE.md) · [Testing strategy](docs/TESTING_STRATEGY.md) · [CI/CD pipeline](docs/CI_CD_PIPELINE.md) · [Getting started](docs/GETTING_STARTED.md) · [Dashboards](docs/DASHBOARDS.md) |
 | Data quality | [Severity tiers](docs/SEVERITY_TIERS.md) · [Value standardization](docs/VALUE_STANDARDIZATION.md) · [Reconciliation invariant](docs/RECONCILIATION_INVARIANT.md) · [Referential completeness](docs/REFERENTIAL_COMPLETENESS.md) · [Schema drift](docs/SCHEMA_DRIFT.md) · [SCD2 validity dating](docs/SCD2_VALIDITY_DATING.md) |
 | Operations | [Run modes and backfill](docs/BACKFILL_QUICK_REFERENCE.md) · [Run-mode idempotency](docs/RUN_MODE_IDEMPOTENCY.md) · [Gold window alignment](docs/GOLD_WINDOW_ALIGNMENT.md) · [Data-quality alerts](docs/DATA_QUALITY_ALERTS.md) · [Freshness alert](docs/FRESHNESS_ALERT.md) · [Alert response](docs/ALERT_RESPONSE.md) |
 | Identity and CI | [CI service principal](docs/CI_SERVICE_PRINCIPAL.md) · [Non-prod identity](docs/NON_PROD_IDENTITY.md) · [CI concurrency](docs/CI_CONCURRENCY.md) · [Unity Catalog grants](docs/UNITY_CATALOG_GRANTS.md) |

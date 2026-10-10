@@ -1,0 +1,44 @@
+# ==============================================================================
+# AI/BI dashboards — the consumption end of the pipeline
+# ==============================================================================
+# The dashboards used to exist only in the operator's workspace folder, with a
+# stale copy of their SQL in src/dashboards/*.ipynb that nothing ran, and every
+# query hardcoded to superstore_catalog.dev_semantic_layer. The .lvdash.json
+# files are now the single source of the SQL and layout, reviewed and deployed
+# like the rest of the bundle.
+#
+# The queries name tables without catalog or schema. dataset_catalog and
+# dataset_schema supply them per target, so the same file renders dev, qa or
+# prod data -- the same environment resolution the notebooks get from
+# superstore_platform_config.
+#
+# To change a dashboard: edit it in the workspace UI, then pull it back with
+#   databricks bundle generate dashboard --resource <key> --force
+# so git stays the source of truth (a later deploy overwrites UI-only edits).
+# ==============================================================================
+
+resources:
+  dashboards:
+    superstore_executive_overview:
+      display_name: "[${bundle.target}] Superstore executive overview"
+      file_path: ../src/dashboards/superstore_executive_overview.lvdash.json
+      warehouse_id: ${var.sql_warehouse_id}
+      dataset_catalog: ${var.catalog}
+      dataset_schema: ${var.schema}_semantic_layer
+
+    superstore_customers:
+      display_name: "[${bundle.target}] Superstore customers"
+      file_path: ../src/dashboards/superstore_customers.lvdash.json
+      warehouse_id: ${var.sql_warehouse_id}
+      dataset_catalog: ${var.catalog}
+      dataset_schema: ${var.schema}_semantic_layer
+
+    # Built from the pipeline's own run metrics (<env>_metrics): how many rows
+    # each layer read and wrote, where every Bronze row ended up, timings per
+    # run, and the data quality checks. Operational, not business, reporting.
+    superstore_pipeline_flow:
+      display_name: "[${bundle.target}] Superstore pipeline flow"
+      file_path: ../src/dashboards/superstore_pipeline_flow.lvdash.json
+      warehouse_id: ${var.sql_warehouse_id}
+      dataset_catalog: ${var.catalog}
+      dataset_schema: ${var.schema}_metrics

@@ -64,13 +64,14 @@ resources/
   integration_test_job.job.yml     # reset → seed → pipeline → asserts
   superstore_freshness_alert.alert.yml      # SQL alert: pipeline silence
   superstore_data_quality_alerts.alert.yml  # SQL alerts: reconciliation, orphans, drift, placeholders
+  superstore_dashboards.dashboard.yml       # AI/BI dashboards, deployed per environment
 configs/                           # YAML: column contracts, DQ rules, env paths
 src/
   superstore_bronze/               # ingestion + entity split modules
   superstore_silver/               # DQ/dedup module + pure transformation functions
   superstore_gold/core/            # SCD2 dimension + facts frameworks
   superstore_shared_utilities/     # logger, platform config, backfill utils, run-id init
-  dashboards/                      # executive, customer, product dashboards
+  dashboards/                      # .lvdash.json: executive, customer, pipeline flow
   features/ | marts/ | metrics/    # serving-layer notebooks
 superstore_orchestrator/
   layer_orchestrator/              # per-layer orchestration notebooks

@@ -10,6 +10,7 @@ include:
   - resources/integration_test_job.job.yml
   - resources/superstore_freshness_alert.alert.yml
   - resources/superstore_data_quality_alerts.alert.yml
+  - resources/superstore_dashboards.dashboard.yml
 
 # Variable declarations. These variables are assigned in the dev/prod targets below.
 variables:
