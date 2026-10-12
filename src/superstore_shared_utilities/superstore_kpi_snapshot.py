@@ -24,9 +24,12 @@ Design rules
 ------------
 1. **One row per run, idempotent.** The row is MERGEd on master_run_id, so a
    retried task replaces its own row instead of adding a second one.
-2. **Same definitions as the dashboards.** Customers and orders exclude the
-   'Unknown' placeholder rows, as the customer dashboard does; the 30-day
-   figures use the same window as the executive tiles.
+2. **Same definitions as the dashboards.** The all-time totals (revenue,
+   profit, orders, customers) come from customer_kpi and exclude the 'Unknown'
+   placeholder rows, exactly as the customer dashboard's tiles do; the 30-day
+   figures use the executive tiles' source and window. Taking the totals from
+   metrics_daily_kpi instead made the table and the tiles differ by the
+   placeholder rows' profit (about $8k in dev).
 3. **A failure to record fails the task**, as in superstore_data_quality_checks:
    a snapshot that silently stops being written leaves the dashboards
    comparing against an ever older run.
@@ -74,11 +77,12 @@ def measures_sql(catalog, semantic_schema, metrics_schema, master_run_id):
       FROM daily d CROSS JOIN bounds b
       WHERE d.order_date > DATE_SUB(b.data_through, 30)
     ),
-    totals AS (
-      SELECT SUM(total_sales) AS revenue_total, SUM(total_profit) AS profit_total FROM daily
-    ),
     customers AS (
-      SELECT SUM(total_orders) AS orders_total, COUNT(DISTINCT customer_id) AS customers_total
+      SELECT
+        SUM(total_sales)            AS revenue_total,
+        SUM(total_profit)           AS profit_total,
+        SUM(total_orders)           AS orders_total,
+        COUNT(DISTINCT customer_id) AS customers_total
       FROM {sl}.customer_kpi
       WHERE region <> 'Unknown' AND segment <> 'Unknown'
     ),
@@ -87,7 +91,7 @@ def measures_sql(catalog, semantic_schema, metrics_schema, master_run_id):
       FROM {mt}.bronze_layer_entity_metrics
       WHERE master_run_id = '{master_run_id}'
     )
-    SELECT * FROM bounds, window_30d, totals, customers, this_run
+    SELECT * FROM bounds, window_30d, customers, this_run
     """
 
 

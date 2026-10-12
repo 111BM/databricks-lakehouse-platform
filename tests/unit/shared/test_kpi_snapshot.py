@@ -99,3 +99,15 @@ def test_measures_sql_reads_this_environment_only():
     assert "master_run_id = 'run-1'" in sql
     # Same exclusion as the customer dashboard, so the numbers agree.
     assert "region <> 'Unknown'" in sql and "segment <> 'Unknown'" in sql
+
+
+@pytest.mark.unit
+def test_all_time_totals_use_the_customer_tiles_definition():
+    # The customer dashboard's tiles sum customer_kpi without the 'Unknown'
+    # placeholder rows. Totals taken from metrics_daily_kpi included them, so
+    # the comparison table and the tiles disagreed on profit.
+    sql = measures_sql("cat", "dev_semantic_layer", "dev_metrics", "run-1")
+    customers_cte = sql.split("customers AS (")[1].split("),")[0]
+    for measure in ("revenue_total", "profit_total", "orders_total", "customers_total"):
+        assert measure in customers_cte
+    assert "FROM cat.dev_semantic_layer.customer_kpi" in customers_cte
