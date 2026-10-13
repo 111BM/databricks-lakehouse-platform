@@ -143,7 +143,7 @@
         "FROM j\n",
         "UNION ALL\n",
         "SELECT 3 AS ord, 'Change' AS run,\n",
-        "  CASE WHEN p_data_through IS NULL THEN '—' WHEN c_data_through = p_data_through AND c_data_from = p_data_from THEN 'same period' ELSE CONCAT(IF(datediff(c_data_through, p_data_through) >= 0, '+', ''), datediff(c_data_through, p_data_through), ' days of data') END AS data_covers,\n",
+        "  CASE WHEN p_data_through IS NULL THEN '—' WHEN c_data_through = p_data_through AND c_data_from = p_data_from THEN 'same period' ELSE CONCAT(IF(datediff(c_data_through, p_data_through) >= 0, '+', '−'), ABS(datediff(c_data_through, p_data_through)), ' days of data') END AS data_covers,\n",
         "  IF(p_snapshot_at IS NULL, '—', CONCAT(FORMAT_NUMBER((unix_timestamp(c_snapshot_at) - unix_timestamp(p_snapshot_at)) / 3600, 1), ' h later')) AS refreshed,\n",
         "  '' AS trigger,\n",
         "  CASE WHEN (c_revenue_30d - p_revenue_30d) IS NULL THEN '—' WHEN (c_revenue_30d - p_revenue_30d) = 0 THEN 'no change' WHEN ABS((c_revenue_30d - p_revenue_30d)) >= 1e9 THEN CONCAT(IF((c_revenue_30d - p_revenue_30d) < 0, '▼ −$', '▲ +$'), FORMAT_NUMBER(ABS((c_revenue_30d - p_revenue_30d)) / 1e9, 2), 'bn') WHEN ABS((c_revenue_30d - p_revenue_30d)) >= 1e6 THEN CONCAT(IF((c_revenue_30d - p_revenue_30d) < 0, '▼ −$', '▲ +$'), FORMAT_NUMBER(ABS((c_revenue_30d - p_revenue_30d)) / 1e6, 2), 'm') WHEN ABS((c_revenue_30d - p_revenue_30d)) >= 1e3 THEN CONCAT(IF((c_revenue_30d - p_revenue_30d) < 0, '▼ −$', '▲ +$'), FORMAT_NUMBER(ABS((c_revenue_30d - p_revenue_30d)) / 1e3, 1), 'k') ELSE CONCAT(IF((c_revenue_30d - p_revenue_30d) < 0, '▼ −$', '▲ +$'), FORMAT_NUMBER(ABS((c_revenue_30d - p_revenue_30d)), 0)) END AS revenue,\n",

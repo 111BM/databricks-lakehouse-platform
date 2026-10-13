@@ -331,7 +331,7 @@
         "FROM j\n",
         "UNION ALL\n",
         "SELECT 3 AS ord, 'Change' AS run,\n",
-        "  CASE WHEN p_data_through IS NULL THEN '—' WHEN c_data_through = p_data_through AND c_data_from = p_data_from THEN 'same period' ELSE CONCAT(IF(datediff(c_data_through, p_data_through) >= 0, '+', ''), datediff(c_data_through, p_data_through), ' days of data') END AS data_covers,\n",
+        "  CASE WHEN p_data_through IS NULL THEN '—' WHEN c_data_through = p_data_through AND c_data_from = p_data_from THEN 'same period' ELSE CONCAT(IF(datediff(c_data_through, p_data_through) >= 0, '+', '−'), ABS(datediff(c_data_through, p_data_through)), ' days of data') END AS data_covers,\n",
         "  IF(p_snapshot_at IS NULL, '—', CONCAT(FORMAT_NUMBER((unix_timestamp(c_snapshot_at) - unix_timestamp(p_snapshot_at)) / 3600, 1), ' h later')) AS refreshed,\n",
         "  '' AS trigger,\n",
         "  '' AS started,\n",
@@ -539,7 +539,7 @@
               "widgetType": "counter",
               "frame": {
                 "showTitle": true,
-                "title": "Silver rows written"
+                "title": "Silver rows written (4 tables)"
               },
               "encodings": {
                 "value": {
@@ -586,7 +586,7 @@
               "widgetType": "counter",
               "frame": {
                 "showTitle": true,
-                "title": "Gold rows written"
+                "title": "Gold rows written (2 dims + 2 facts)"
               },
               "encodings": {
                 "value": {
@@ -2097,14 +2097,14 @@
                     "displayAs": "string",
                     "visible": true,
                     "order": 100004,
-                    "title": "Started (Sydney)",
+                    "title": "Bronze started (Sydney)",
                     "allowSearch": false,
                     "alignContent": "left",
                     "allowHTML": false,
                     "highlightLinks": false,
                     "useMonospaceFont": false,
                     "preserveWhitespace": false,
-                    "displayName": "Started (Sydney)"
+                    "displayName": "Bronze started (Sydney)"
                   },
                   {
                     "fieldName": "raw_rows",
@@ -2151,14 +2151,14 @@
                     "displayAs": "string",
                     "visible": true,
                     "order": 100006,
-                    "title": "Minutes",
+                    "title": "Bronze → snapshot (min)",
                     "allowSearch": false,
                     "alignContent": "left",
                     "allowHTML": false,
                     "highlightLinks": false,
                     "useMonospaceFont": false,
                     "preserveWhitespace": false,
-                    "displayName": "Minutes"
+                    "displayName": "Bronze → snapshot (min)"
                   }
                 ]
               },
