@@ -138,13 +138,13 @@ carry files from earlier systems. It has visible effects:
 The pipeline treats it like any other file. Removing it from the source and
 reloading would remove both effects.
 
-## This run vs last run
+## Latest run vs previous run
 
 Every dashboard opens with the same strip:
 
 | Element | Shows | Source |
 |---|---|---|
-| **This run vs last run** table | Data covers (first to last order date), when the data was refreshed, what triggered the run, and the dashboard's headline numbers, for the latest run, the run before, and the change | `kpi_run_snapshot` |
+| **Latest run vs previous run** table | Data covers (first to last order date), when the data was refreshed, what triggered the run, and the dashboard's headline numbers, for the latest run, the run before, and the change | `kpi_run_snapshot` |
 | **Page queried** | When this page ran its queries, in Sydney time | `current_timestamp()` |
 | **Status** | Fresh under 9 days, stale after: the [freshness alert](FRESHNESS_ALERT.md)'s 216 h threshold | `kpi_run_snapshot` |
 
@@ -190,13 +190,13 @@ The definitions match the dashboards: customers and orders exclude the
 window. The pure part is unit-tested in `tests/unit/shared/test_kpi_snapshot.py`.
 
 History starts with the first run after the task was added; until a second
-run exists, the "Last run" row shows dashes.
+run exists, the "Previous run" row shows dashes.
 
 ## Pipeline flow, panel by panel
 
 | Panel | Source | Notes |
 |---|---|---|
-| This run vs last run | `kpi_run_snapshot` | Trigger, start time (Sydney), raw rows ingested and minutes, for the latest two runs |
+| Latest run vs previous run | `kpi_run_snapshot` | Trigger, start time (Sydney), raw rows ingested and minutes, for the latest two runs |
 | Since last successful run | `silver_layer_metrics` | Same measure as the [freshness alert](FRESHNESS_ALERT.md): `SUCCESS` only, alert threshold 216 h |
 | Latest-run tiles | `bronze_` / `silver_` / `gold_layer_metrics` | "Latest" means the latest run that **ingested data**. An incremental run with no new files is a correct no-op, but a dashboard of zeros explains nothing |
 | Where every Bronze row ended up (Sankey) | `data_quality_checks`, `check_name = 'reconciliation'` | The [reconciliation invariant](RECONCILIATION_INVARIANT.md) drawn as a picture: `bronze = silver current + superseded + audit + quarantine` |

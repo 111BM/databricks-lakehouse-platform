@@ -86,7 +86,7 @@
     },
     {
       "name": "run_comparison",
-      "displayName": "This run vs last run",
+      "displayName": "Latest run vs previous run",
       "queryLines": [
         "-- One row per pipeline run is recorded in kpi_run_snapshot (superstore_kpi_snapshot.py).\n",
         "-- This shows the latest two side by side, so a jump can be read as new data\n",
@@ -124,7 +124,7 @@
         "    p.customers_total AS p_customers_total\n",
         "  FROM c LEFT JOIN p ON TRUE\n",
         ")\n",
-        "SELECT 1 AS ord, 'This run' AS run,\n",
+        "SELECT 1 AS ord, 'Latest run' AS run,\n",
         "  IF(c_data_from IS NULL, '—', CONCAT(DATE_FORMAT(c_data_from, 'd MMM yyyy'), ' – ', DATE_FORMAT(c_data_through, 'd MMM yyyy'))) AS data_covers,\n",
         "  IF(c_snapshot_at IS NULL, '—', CONCAT(DATE_FORMAT(from_utc_timestamp(c_snapshot_at, 'Australia/Sydney'), 'EEE d MMM, HH:mm'), ' ', IF(unix_timestamp(from_utc_timestamp(c_snapshot_at, 'Australia/Sydney')) - unix_timestamp(c_snapshot_at) = 39600, 'AEDT', 'AEST'))) AS refreshed,\n",
         "  CASE c_trigger_type WHEN 'periodic' THEN 'scheduled' WHEN 'one_time' THEN 'manual' WHEN 'run_job_task' THEN 'integration test' WHEN NULL THEN '—' ELSE c_trigger_type END AS trigger,\n",
@@ -133,7 +133,7 @@
         "  IF((c_profit_30d / NULLIF(c_revenue_30d, 0)) IS NULL, '—', CONCAT(REPLACE(FORMAT_NUMBER((c_profit_30d / NULLIF(c_revenue_30d, 0)) * 100, 1), '-', '−'), '%')) AS margin\n",
         "FROM j\n",
         "UNION ALL\n",
-        "SELECT 2 AS ord, 'Last run' AS run,\n",
+        "SELECT 2 AS ord, 'Previous run' AS run,\n",
         "  IF(p_data_from IS NULL, '—', CONCAT(DATE_FORMAT(p_data_from, 'd MMM yyyy'), ' – ', DATE_FORMAT(p_data_through, 'd MMM yyyy'))) AS data_covers,\n",
         "  IF(p_snapshot_at IS NULL, '—', CONCAT(DATE_FORMAT(from_utc_timestamp(p_snapshot_at, 'Australia/Sydney'), 'EEE d MMM, HH:mm'), ' ', IF(unix_timestamp(from_utc_timestamp(p_snapshot_at, 'Australia/Sydney')) - unix_timestamp(p_snapshot_at) = 39600, 'AEDT', 'AEST'))) AS refreshed,\n",
         "  CASE p_trigger_type WHEN 'periodic' THEN 'scheduled' WHEN 'one_time' THEN 'manual' WHEN 'run_job_task' THEN 'integration test' WHEN NULL THEN '—' ELSE p_trigger_type END AS trigger,\n",
@@ -1179,7 +1179,7 @@
               "withRowNumber": false,
               "frame": {
                 "showTitle": true,
-                "title": "This run vs last run"
+                "title": "Latest run vs previous run"
               }
             }
           },
