@@ -148,7 +148,7 @@ Full exports: [pipeline flow](docs/dashboards/pipeline_flow.pdf) · [executive o
 | End-to-end runtime at 3M source rows | **11 min 38 s**, down from 23 min 53 s ([how](docs/PERFORMANCE_INVESTIGATION.md)) |
 | End-to-end runtime at ~100M source rows (prod) | **41 min**: Bronze 8 min, Silver 23 min, all 18 tasks first attempt; repeated on 2026-10-13 on the rebuilt data in **38.9 min**, 19 tasks ([details](docs/PERFORMANCE_INVESTIGATION.md#at-100m-rows)) |
 | Slowest Silver entity after the date-parsing fix | 803 s → **158 s** |
-| Prod reconciliation | balanced on **101,211,515** rows across four entities, checked every run |
+| Prod reconciliation | balanced on **101,210,279** rows across four entities, checked every run |
 | Unit tests / integration suite | **299** / about **40 min**, blocking every qa promotion |
 | Personal access tokens in use | **0** — CI deploys as service principals, people sign in with OAuth |
 

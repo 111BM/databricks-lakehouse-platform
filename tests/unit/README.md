@@ -31,19 +31,31 @@ python3.12 -m venv .venv-tests
 
 ```
 tests/unit/
-  conftest.py                      # local Spark, portable imports, fake dbutils
+  conftest.py                         # local Spark, portable imports, fake dbutils
   shared/
-    test_backfill_config.py        # get_backfill_config (date/mode validation)
-    test_liquid_clustering.py      # plan_clustering, validate_cluster_columns
+    test_backfill_config.py           # get_backfill_config (date/mode validation)
+    test_backfill_file_identity.py    # backfill utils: which source files a window covers
+    test_data_quality_checks.py       # check rows recorded for the SQL alerts
+    test_freshness_alert.py           # the freshness alert's query and threshold
+    test_kpi_snapshot.py              # snapshot_row, measures_sql (latest vs previous run)
+    test_liquid_clustering.py         # plan_clustering, validate_cluster_columns
+    test_placeholder_monitor.py       # placeholder_count_sql
+    test_reconciliation.py            # reconciliation_sql (every Bronze row accounted for)
+    test_schema_drift.py              # schema drift detection
+    test_source_acquisition.py        # classify_source_state (empty source vs quiet week)
   bronze/
-    test_sanitize_column.py        # module 01: sanitize_column
+    test_is_initial_run.py            # module 01: is_initial_run
+    test_sanitize_column.py           # module 01: sanitize_column
   silver/
-    test_silver_dedup.py           # deduplicate_latest_wins (latest-wins)
-    test_silver_hashing.py         # row_hash (idempotency key)
-    test_silver_dq.py              # clean_string_columns, add_error_columns, add_is_valid
+    test_silver_dedup.py              # deduplicate_latest_wins (latest-wins)
+    test_silver_hashing.py            # row_hash (idempotency key)
+    test_silver_dq.py                 # clean_string_columns, add_error_columns, add_is_valid
   gold/
-    test_scd2_timeline.py          # dimension: compute_scd2_timeline
-    test_prepare_fact_columns.py   # facts: prepare_fact_columns
+    test_scd2_timeline.py             # dimension: compute_scd2_timeline
+    test_scd2_effective_from.py       # dimension: prepare_scd2_columns (validity dating)
+    test_dimension_placeholder.py     # dimension: substitute_untrusted_attributes
+    test_gold_window_filter.py        # dimension: apply_window_filter
+    test_prepare_fact_columns.py      # facts: prepare_fact_columns
 ```
 
 ## What is unit-tested vs. integration-tested
@@ -57,6 +69,7 @@ pipeline on seeded data), not here.
 |-------|--------|--------------------|------------------------|
 | Shared | backfill_utils | `get_backfill_config` ✅ | `get_incremental_with_backfill` (reads tables) |
 | Shared | liquid_clustering | `plan_clustering` ✅, `validate_cluster_columns` ✅ | `converge_liquid_clustering` (DESCRIBE DETAIL, ALTER/REPLACE TABLE) |
+| Shared | kpi_snapshot | `snapshot_row` ✅, `measures_sql` ✅ | `record_snapshot` (MERGE, CREATE VIEW) |
 | Bronze | 01 ingest | `sanitize_column` ✅ | `bronze_ingest_incremental` (Auto Loader, Delta write) |
 | Bronze | 02 entity split | — (module reads a YAML at import + all funcs do table I/O) | `bronze_entity_incremental_append`, `collect_entity_metrics`, `get_last_processed_ts` |
 | Silver | silver_module | `deduplicate_latest_wins` ✅, `row_hash` ✅, `clean_string_columns` ✅, `add_error_columns` ✅, `add_is_valid` ✅ | `bronze_to_silver_prod` shell (read/merge/write), `write_etl_metrics`; the bespoke `ship_date<order_date` rule stays inline |
