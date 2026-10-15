@@ -55,6 +55,11 @@ rows, all 18 tasks green on the first attempt: Bronze 7 min 52 s, Silver 23 min 
 at 1M–3M predicted about 2 h 40 min, most likely because Serverless scaled out for a batch
 big enough to need it (not verified from cluster metrics). Per-entity numbers: **[docs/PERFORMANCE_INVESTIGATION.md](PERFORMANCE_INVESTIGATION.md#at-100m-rows)**.
 
+The load was repeated on 2026-10-13 with the rebuilt data generator (prod run
+`1014695441717658`, 100.2M new rows, now 19 tasks): **38.9 min**, Bronze 7 min 11 s, Silver
+22 min 37 s, all tasks first attempt. Within two minutes of the first run on different data,
+so the 41-minute figure holds.
+
 ## Repository structure
 
 ```
@@ -87,13 +92,18 @@ tests/
 
 ## About the pipeline screenshot
 
-The README screenshot is prod run `710265257759139` on 2026-10-07: all 18 tasks green in
-7 min 50 s, under the `superstore-ci-prod` service principal. It was a `replay` of the
-2026-10-01 window — the run that converted the Gold tables to Liquid Clustering
-([LIQUID_CLUSTERING_MIGRATION.md](LIQUID_CLUSTERING_MIGRATION.md)) — so Bronze exits early
-in it (6 s); in a normal incremental run with new data Bronze takes minutes.
+The README screenshot is prod run `1014695441717658` on 2026-10-13: all 19 tasks green on the
+first attempt in 38.9 min, under the `superstore-ci-prod` service principal. It loaded the
+100 files from the rebuilt data generator (100.2M new rows) on top of the three files
+already in the prod feed: Bronze 7 min 11 s, Silver 22 min 37 s, Gold under 2 min, and the
+new `kpi_run_snapshot` task 16 s. It is the first screenshot to show the 19-task job.
 
-It replaced a screenshot from 2026-08-02 that showed the same DAG shape over an **empty**
+It replaced prod run `710265257759139` from 2026-10-07 (18 tasks, 7 min 50 s): a `replay` of
+the 2026-10-01 window, the run that converted the Gold tables to Liquid Clustering
+([LIQUID_CLUSTERING_MIGRATION.md](LIQUID_CLUSTERING_MIGRATION.md)), in which Bronze exited
+early (6 s) because a replay re-derives from existing Bronze.
+
+That one had replaced a screenshot from 2026-08-02 that showed the same DAG shape over an **empty**
 landing volume: prod had no source file until 2026-08-16, so every green run before then
 processed nothing — the defect described in
 [Defects found by measurement](DEFECTS_FOUND_BY_MEASUREMENT.md). The first prod run to

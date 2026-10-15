@@ -92,7 +92,7 @@ flowchart TB
 
 ![Production job DAG on Databricks Serverless](docs/images/prod_pipeline_DAG.png)
 
-*A production run on 2026-10-07 (run `710265257759139`, 7 min 50 s, all 18 tasks green, as the prod service principal): source acquisition through Bronze, Silver and Gold to marts, features and KPI views. The same DAG runs in dev, qa and prod; only `SUPERSTORE_ENV` differs.*
+*A production run on 2026-10-13 (run `1014695441717658`, 38.9 min, all 19 tasks green on the first attempt, as the prod service principal): 100.2M new rows from source acquisition through Bronze (7 min) and Silver (23 min) to Gold, marts, features, KPI views and the run snapshot. The same DAG runs in dev, qa and prod; only `SUPERSTORE_ENV` differs.*
 
 Layer by layer, the cross-cutting design (config-driven contracts, environment isolation, run modes, observability) and the repository layout: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
@@ -130,7 +130,7 @@ Full exports: [pipeline flow](docs/dashboards/pipeline_flow.pdf) · [executive o
 | Measure | Value |
 |---|---|
 | End-to-end runtime at 3M source rows | **11 min 38 s**, down from 23 min 53 s ([how](docs/PERFORMANCE_INVESTIGATION.md)) |
-| End-to-end runtime at ~100M source rows (prod) | **41 min**: Bronze 8 min, Silver 23 min, all 18 tasks first attempt ([details](docs/PERFORMANCE_INVESTIGATION.md#at-100m-rows)) |
+| End-to-end runtime at ~100M source rows (prod) | **41 min**: Bronze 8 min, Silver 23 min, all 18 tasks first attempt; repeated on 2026-10-13 on the rebuilt data in **38.9 min**, 19 tasks ([details](docs/PERFORMANCE_INVESTIGATION.md#at-100m-rows)) |
 | Slowest Silver entity after the date-parsing fix | 803 s → **158 s** |
 | Prod reconciliation | balanced on **101,211,515** rows across four entities, checked every run |
 | Unit tests / integration suite | **288** / about **40 min**, blocking every qa promotion |
