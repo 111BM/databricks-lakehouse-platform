@@ -199,7 +199,7 @@ run exists, the "Previous run" row shows dashes.
 | Latest run vs previous run | `kpi_run_snapshot` | Trigger, start time (Sydney), raw rows ingested and minutes, for the latest two runs |
 | Since last successful run | `silver_layer_metrics` | Same measure as the [freshness alert](FRESHNESS_ALERT.md): `SUCCESS` only, alert threshold 216 h |
 | Latest-run tiles | `bronze_` / `silver_` / `gold_layer_metrics` | "Latest" means the latest run that **ingested data**. An incremental run with no new files is a correct no-op, but a dashboard of zeros explains nothing |
-| Where every Bronze row ended up (Sankey) | `data_quality_checks`, `check_name = 'reconciliation'` | The [reconciliation invariant](RECONCILIATION_INVARIANT.md) drawn as a picture: `bronze = silver current + superseded + audit + quarantine` |
+| Where every Bronze row ended up (Sankey) | `data_quality_checks`, `check_name = 'reconciliation'` | The [reconciliation invariant](RECONCILIATION_INVARIANT.md) drawn as a picture: `bronze = silver current + superseded + audit + quarantine`. Superseded and quarantined rows share one node: each is a tiny share of Bronze, and the chart stacks its smallest outcomes together, so separate labels collided |
 | Rows and timing per entity | all three layer metrics tables | Silver is the slowest layer, as measured in [Performance investigation](PERFORMANCE_INVESTIGATION.md) |
 | Run history | all three layer metrics tables | Wall clock per layer, not summed per entity: Gold builds dimensions and facts in parallel |
 | Reliability | layer metrics + `data_quality_checks` | Every run, including no-op runs |

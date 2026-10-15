@@ -96,6 +96,20 @@ flowchart TB
 
 Layer by layer, the cross-cutting design (config-driven contracts, environment isolation, run modes, observability) and the repository layout: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
+### Dashboards
+
+Three Databricks AI/BI dashboards are deployed by the bundle, one definition per dashboard for dev, qa and prod. The pipeline flow dashboard is built from the pipeline's own run metrics: what each layer read and wrote, and where every Bronze row ended up.
+
+![Pipeline flow dashboard: latest run vs previous run, and rows per layer](docs/images/dashboards/pipeline_flow_top.png)
+
+![Where every Bronze row ended up: the reconciliation check as a Sankey](docs/images/dashboards/pipeline_flow_sankey.png)
+
+![Executive overview: 30-day KPIs and weekly trends](docs/images/dashboards/executive_overview.png)
+
+*Prod, 2026-10-13: 101.2M rows across 103 files, Bronze to Gold in 28.5 min, 8/8 data quality checks passed. Each dashboard shows the latest run next to the previous one, so new data can be told apart from restated history. The data is synthetic and its business patterns are modelled in the generator; one older feed file explains the early-2026 margin dip.*
+
+Full exports: [pipeline flow](docs/dashboards/pipeline_flow.pdf) · [executive overview](docs/dashboards/executive_overview.pdf) · [customers](docs/dashboards/customers.pdf). How they are built and deployed: **[docs/DASHBOARDS.md](docs/DASHBOARDS.md)**.
+
 ---
 
 ## Tech stack

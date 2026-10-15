@@ -78,13 +78,13 @@
         ")\n",
         "SELECT CONCAT('Bronze: ', entity) AS source, outcome, row_count\n",
         "FROM rec\n",
-        "LATERAL VIEW stack(4,\n",
-        "  -- Numbered so the chart keeps this order: the two thin flows (superseded,\n",
-        "  -- quarantine) are separated by a thick one, and their labels do not collide.\n",
-        "  '1 Silver (current)',  d.silver_rows,\n",
-        "  '2 Superseded',        d.superseded_rows,\n",
-        "  '3 Audit (duplicate)', d.audit_rows,\n",
-        "  '4 Quarantine',        d.quarantine_rows\n",
+        "LATERAL VIEW stack(3,\n",
+        "  'Silver (current)',  d.silver_rows,\n",
+        "  'Audit (duplicate)', d.audit_rows,\n",
+        "  -- Superseded and quarantined rows are each a tiny share of Bronze, and the\n",
+        "  -- chart stacks its smallest outcomes together, so two separate labels always\n",
+        "  -- collided. They share one node here; the quarantine chart below splits them.\n",
+        "  'Superseded or quarantined', d.superseded_rows + d.quarantine_rows\n",
         ") AS outcome, row_count\n",
         "WHERE row_count > 0\n"
       ]
@@ -181,7 +181,7 @@
         "  HAVING MAX(IF(layer = 'Bronze', rows_in, 0)) > 0\n",
         ")\n",
         "SELECT\n",
-        "  DATE_FORMAT(r.run_start, 'yyyy-MM-dd HH:mm') AS run,\n",
+        "  DATE_FORMAT(from_utc_timestamp(r.run_start, 'Australia/Sydney'), 'yyyy-MM-dd HH:mm') AS run,\n",
         "  e.layer,\n",
         "  -- Wall clock per layer: Gold builds dimensions and facts in parallel, so\n",
         "  -- summing per-entity durations would overstate it.\n",
@@ -222,7 +222,7 @@
         "runs AS (\n",
         "  SELECT master_run_id, MIN(start_ts) AS run_start FROM loads GROUP BY master_run_id\n",
         ")\n",
-        "SELECT DATE_FORMAT(r.run_start, 'yyyy-MM-dd HH:mm') AS run, l.run_status, COUNT(*) AS loads\n",
+        "SELECT DATE_FORMAT(from_utc_timestamp(r.run_start, 'Australia/Sydney'), 'yyyy-MM-dd HH:mm') AS run, l.run_status, COUNT(*) AS loads\n",
         "FROM loads l\n",
         "JOIN runs r USING (master_run_id)\n",
         "GROUP BY r.run_start, l.run_status\n"
@@ -236,7 +236,7 @@
         "  SELECT master_run_id, MIN(checked_at) AS checked FROM data_quality_checks GROUP BY master_run_id\n",
         ")\n",
         "SELECT\n",
-        "  DATE_FORMAT(r.checked, 'yyyy-MM-dd HH:mm') AS run,\n",
+        "  DATE_FORMAT(from_utc_timestamp(r.checked, 'Australia/Sydney'), 'yyyy-MM-dd HH:mm') AS run,\n",
         "  IF(c.passed, 'Passed', 'Failed') AS result,\n",
         "  COUNT(*) AS checks\n",
         "FROM data_quality_checks c\n",
@@ -266,7 +266,7 @@
       "name": "schema_drift",
       "displayName": "Schema drift log",
       "queryLines": [
-        "SELECT DATE_FORMAT(detected_at, 'yyyy-MM-dd HH:mm') AS detected, column_name, drift_status, row_count\n",
+        "SELECT DATE_FORMAT(from_utc_timestamp(detected_at, 'Australia/Sydney'), 'yyyy-MM-dd HH:mm') AS detected, column_name, drift_status, row_count\n",
         "FROM schema_drift\n",
         "ORDER BY detected_at DESC\n",
         "LIMIT 50\n"
@@ -770,7 +770,7 @@
                 "**How to read this**\n",
                 "Each entity reads every raw row from Bronze. Silver sends each row to exactly one place:\n",
                 "- **Silver (current):** the live record\n",
-                "- **Superseded:** an older version replaced by a newer one\n",
+                "- **Superseded:** an older version replaced by a newer one (shown with quarantine)\n",
                 "- **Audit:** an exact duplicate, kept for traceability\n",
                 "- **Quarantine:** failed a validation rule\n",
                 "\nThe reconciliation check fails the run unless these four add up to the Bronze count. Most order quarantines come from source rows whose ship date is before the order date."
@@ -1221,9 +1221,9 @@
                     "type": "categorical"
                   },
                   "axis": {
-                    "title": "Run"
+                    "title": "Run (Sydney)"
                   },
-                  "displayName": "Run"
+                  "displayName": "Run (Sydney)"
                 },
                 "y": {
                   "fieldName": "minutes",
@@ -1308,9 +1308,9 @@
                     "type": "categorical"
                   },
                   "axis": {
-                    "title": "Run"
+                    "title": "Run (Sydney)"
                   },
-                  "displayName": "Run"
+                  "displayName": "Run (Sydney)"
                 },
                 "y": {
                   "fieldName": "rows_out",
@@ -1416,9 +1416,9 @@
                     "type": "categorical"
                   },
                   "axis": {
-                    "title": "Run"
+                    "title": "Run (Sydney)"
                   },
-                  "displayName": "Run"
+                  "displayName": "Run (Sydney)"
                 },
                 "y": {
                   "fieldName": "loads",
@@ -1503,9 +1503,9 @@
                     "type": "categorical"
                   },
                   "axis": {
-                    "title": "Run"
+                    "title": "Run (Sydney)"
                   },
-                  "displayName": "Run"
+                  "displayName": "Run (Sydney)"
                 },
                 "y": {
                   "fieldName": "checks",
@@ -1812,14 +1812,14 @@
                     "displayAs": "string",
                     "visible": true,
                     "order": 100000,
-                    "title": "Detected",
+                    "title": "Detected (Sydney)",
                     "allowSearch": false,
                     "alignContent": "left",
                     "allowHTML": false,
                     "highlightLinks": false,
                     "useMonospaceFont": false,
                     "preserveWhitespace": false,
-                    "displayName": "Detected"
+                    "displayName": "Detected (Sydney)"
                   },
                   {
                     "fieldName": "column_name",
