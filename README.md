@@ -70,12 +70,18 @@ flowchart TB
         MART[Marts]
         KPI[KPI views]
         FEAT[ML features]
+        SNAP[(Run snapshot<br/>latest vs previous run)]
     end
 
     subgraph OBS[Observability]
         CHK[(Data-quality checks<br/>schema drift<br/>layer metrics)]
         ALR[SQL Alerts]
         NOTIFY[Email + Slack]
+    end
+
+    subgraph DASH[AI/BI dashboards]
+        BIZ[Executive + Customers]
+        PIPE[Pipeline flow]
     end
 
     FEED -->|new files only| RAW --> ENT --> DQ
@@ -85,6 +91,10 @@ flowchart TB
     SLV --> DIM & FCT
     DIM & FCT --> MART & FEAT
     MART --> KPI
+    KPI --> SNAP
+    KPI --> BIZ
+    SNAP -.-> BIZ & PIPE
+    CHK --> PIPE
     SLV -.->|reconciliation| CHK
     MART -.->|orphans, placeholders| CHK
     CHK --> ALR --> NOTIFY
