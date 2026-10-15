@@ -145,8 +145,7 @@ Every dashboard opens with the same strip:
 | Element | Shows | Source |
 |---|---|---|
 | **Latest run vs previous run** table | Data covers (first to last order date), when the data was refreshed, what triggered the run, and the dashboard's headline numbers, for the latest run, the run before, and the change | `kpi_run_snapshot` |
-| **Page queried** | When this page ran its queries, in Sydney time | `current_timestamp()` |
-| **Status** | Fresh under 9 days, stale after: the [freshness alert](FRESHNESS_ALERT.md)'s 216 h threshold | `kpi_run_snapshot` |
+| **This page (refreshes weekly)** table | *Queried*: when this page ran its queries, in Sydney time. *Status*: Fresh under 9 days, stale after, the [freshness alert](FRESHNESS_ALERT.md)'s 216 h threshold | `current_timestamp()`, `kpi_run_snapshot` |
 
 ### Three different times
 
@@ -168,7 +167,7 @@ every screenshot and export taken later.
 
 The executive tiles compare the last 30 days with the 30 before: a business
 question. The run comparison answers a trust question: did the numbers change
-because new data arrived, or because history changed? "Data covers +7 days"
+because new data arrived, or because history changed? "Data covers: ends 7 days later"
 next to higher revenue is new data. The same dates with different totals is a
 restatement: a late file, a reload, or a defect.
 
@@ -196,7 +195,7 @@ run exists, the "Previous run" row shows dashes.
 
 | Panel | Source | Notes |
 |---|---|---|
-| Latest run vs previous run | `kpi_run_snapshot` | Trigger, start time (Sydney), raw rows ingested and minutes, for the latest two runs |
+| Latest run vs previous run | `kpi_run_snapshot` | Trigger, Bronze start (Sydney), raw rows ingested and Bronze-to-snapshot minutes, for the latest two runs. The snapshot records Bronze's start, not the job's, so the job's first few minutes (acquisition, schema setup) are not included |
 | Since last successful run | `silver_layer_metrics` | Same measure as the [freshness alert](FRESHNESS_ALERT.md): `SUCCESS` only, alert threshold 216 h |
 | Latest-run tiles | `bronze_` / `silver_` / `gold_layer_metrics` | "Latest" means the latest run that **ingested data**. An incremental run with no new files is a correct no-op, but a dashboard of zeros explains nothing |
 | Where every Bronze row ended up (Sankey) | `data_quality_checks`, `check_name = 'reconciliation'` | The [reconciliation invariant](RECONCILIATION_INVARIANT.md) drawn as a picture: `bronze = silver current + superseded + audit + quarantine`. Superseded and quarantined rows share one node: each is a tiny share of Bronze, and the chart stacks its smallest outcomes together, so separate labels collided |

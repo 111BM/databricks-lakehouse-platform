@@ -16,11 +16,11 @@ The data is the Superstore schema, synthetically generated with deliberate dirt;
   → [Silver module](src/superstore_silver/) · [Severity tiers](docs/SEVERITY_TIERS.md)
 
 - **Every row accounted for.** `bronze == silver + quarantine + audit + superseded`,
-  checked on every run (balanced on 101,211,515 rows in prod), with SQL Alerts to email
+  checked on every run (balanced on 101,210,279 rows in prod), with SQL Alerts to email
   and Slack.
   → [Reconciliation invariant](docs/RECONCILIATION_INVARIANT.md) · [Alerts](docs/DATA_QUALITY_ALERTS.md)
 
-- **Tested against the real pipeline.** 288 unit tests, and a suite that seeds dirty
+- **Tested against the real pipeline.** 299 unit tests, and a suite that seeds dirty
   data, runs the real pipeline twice, replays it, and asserts every layer before
   anything reaches prod.
   → [Testing strategy](docs/TESTING_STRATEGY.md) · [CI/CD](docs/CI_CD_PIPELINE.md)
@@ -36,6 +36,11 @@ The data is the Superstore schema, synthetically generated with deliberate dirt;
 - **100M rows in 41 minutes.** About 100M new rows ran through prod end to end with
   no code change; Silver, the slowest layer, took 23 min of its 60 min timeout.
   → [At 100M rows](docs/PERFORMANCE_INVESTIGATION.md#at-100m-rows)
+
+- **Dashboards that say how fresh they are.** Three AI/BI dashboards deployed as code,
+  each showing the latest run next to the previous one, so new data can be told apart
+  from restated history.
+  → [Dashboards](#dashboards) · [How they work](docs/DASHBOARDS.md)
 
 - **One job definition for every environment.** Medallion layers in a 19-task job,
   with per-task timeouts and retries set from measured runtimes.
@@ -130,7 +135,8 @@ Full exports: [pipeline flow](docs/dashboards/pipeline_flow.pdf) · [executive o
 | Processing | PySpark, Auto Loader, Delta `MERGE`, SCD Type 2 |
 | Deployment | Databricks Asset Bundles, GitHub Actions, service principals (OAuth M2M) |
 | Quality and monitoring | Quarantine and audit tables, reconciliation, schema-drift detection, Databricks SQL Alerts, Slack |
-| Testing | pytest on local Spark (288 tests), an end-to-end integration job on Databricks |
+| Testing | pytest on local Spark (299 tests), an end-to-end integration job on Databricks |
+| Dashboards | Databricks AI/BI dashboards, deployed by the bundle per environment |
 | Governance | Unity Catalog grants as Terraform, with plan-time policy checks |
 
 ---
